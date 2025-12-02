@@ -1,0 +1,64 @@
+{
+  "name": "ernesto",
+  "version": "0.0.1",
+  "description": "A Context System for Agent-Assisted Organizations",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc",
+    "format": "prettier --check ./src ./example",
+    "build": "rollup -c rollup.config.js",
+    "example:server": "DEBUG=oauth:* tsx --watch example/index.ts",
+    "example:client": "tsx --watch node_modules/@modelcontextprotocol/sdk/dist/cjs/examples/client/simpleOAuthClient.js"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "contributors": [
+    {
+      "author": "Clement Rouquier"
+    },
+    {
+      "author": "William Sandström <w.sandstrom@gmail.com>"
+    }
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wille/mcp-oauth-server.git"
+  },
+  "keywords": [
+    "ernesto",
+    "mcp"
+  ],
+  "license": "ISC",
+  "packageManager": "pnpm@10.22.0",
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.23.0",
+    "@rollup/plugin-typescript": "^12.3.0",
+    "@types/debug": "^4.1.12",
+    "@types/express": "^5.0.5",
+    "@types/node": "^24.10.1",
+    "mcp-oauth-server": "^0.0.2",
+    "prettier": "^3.7.3",
+    "rollup": "^4.53.3",
+    "tslib": "^2.8.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "typesense": "^2.1.0",
+    "vitest": "^4.0.14"
+  },
+  "peerDependencies": {
+    "@modelcontextprotocol/sdk": "^1.23.0",
+    "typesense": "^2.1.0"
+  },
+  "dependencies": {
+    "debug": "^4"
+  }
+}
