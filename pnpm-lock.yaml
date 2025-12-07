@@ -15,7 +15,7 @@ importers:
         specifier: ^4
         version: 4.4.3
       zod:
-        specifier: ^4.1.13
+        specifier: ^4.1
         version: 4.1.13
     devDependencies:
       '@modelcontextprotocol/sdk':

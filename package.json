@@ -11,7 +11,7 @@
     "typecheck": "tsc",
     "format": "prettier --check ./src ./example",
     "build": "rollup -c rollup.config.js",
-    "example": "DEBUG=ernesto:* tsx --watch example/index.ts"
+    "example": "DEBUG=ernesto:* tsx --env-file .env --watch example/index.ts"
   },
   "type": "module",
   "exports": {
