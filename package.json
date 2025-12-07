@@ -11,8 +11,7 @@
     "typecheck": "tsc",
     "format": "prettier --check ./src ./example",
     "build": "rollup -c rollup.config.js",
-    "example:server": "DEBUG=oauth:* tsx --watch example/index.ts",
-    "example:client": "tsx --watch node_modules/@modelcontextprotocol/sdk/dist/cjs/examples/client/simpleOAuthClient.js"
+    "example": "DEBUG=ernesto:* tsx --watch example/index.ts"
   },
   "type": "module",
   "exports": {
@@ -56,9 +55,11 @@
   },
   "peerDependencies": {
     "@modelcontextprotocol/sdk": "^1.23.0",
-    "typesense": "^2.1.0"
+    "typesense": "^2.1.0",
+    "zod": "^3"
   },
   "dependencies": {
+    "@toon-format/toon": "^2.1.0",
     "debug": "^4"
   }
 }
