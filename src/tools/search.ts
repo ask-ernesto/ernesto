@@ -19,16 +19,7 @@ const inputSchema = z.object({
     perDomain: z.number().min(1).max(50).default(10).optional().describe('Maximum results per domain (default: 10)'),
 });
 
-export interface AskTool {
-    name: 'ask';
-    description: string;
-    inputSchema: typeof inputSchema;
-    handler: (params: z.infer<typeof inputSchema>) => Promise<{
-        content: { type: 'text'; text: string }[];
-    }>;
-}
-
-export function createSearchTool(context: RouteContext): AskTool {
+export function createSearchTool(context: RouteContext) {
     return {
         name: 'ask',
         description: 'Semantic search across Ernesto. Returns matching instructions, templates, and resources ranked by relevance.',

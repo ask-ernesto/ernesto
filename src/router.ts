@@ -217,7 +217,7 @@ export async function routeExecution(route: string, params: unknown, ctx: RouteC
             if (!validated.success) {
                 log('Input validation failed', {
                     route,
-                    errors: validated.error.errors,
+                    errors: validated.error.issues,
                 });
 
                 return {
@@ -225,7 +225,7 @@ export async function routeExecution(route: string, params: unknown, ctx: RouteC
                     error: {
                         code: 'INVALID_INPUT',
                         message: 'Input validation failed',
-                        details: summarizeValidationErrors(validated.error.errors),
+                        details: summarizeValidationErrors(validated.error.issues),
                     },
                 };
             }
@@ -246,8 +246,8 @@ export async function routeExecution(route: string, params: unknown, ctx: RouteC
         if (!validatedOutput.success) {
             log('Output validation failed', {
                 route,
-                errorCount: validatedOutput.error.errors.length,
-                errors: validatedOutput.error.errors,
+                errorCount: validatedOutput.error.issues.length,
+                errors: validatedOutput.error.issues,
             });
 
             return {
@@ -255,7 +255,7 @@ export async function routeExecution(route: string, params: unknown, ctx: RouteC
                 error: {
                     code: 'INVALID_OUTPUT',
                     message: 'Route returned invalid output',
-                    details: summarizeValidationErrors(validatedOutput.error.errors),
+                    details: summarizeValidationErrors(validatedOutput.error.issues),
                 },
             };
         }

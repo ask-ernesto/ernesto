@@ -144,14 +144,12 @@ function getFieldType(schema: z.ZodSchema): string {
     }
 
     if (baseSchema instanceof z.ZodEnum) {
-        const values = baseSchema._def.values;
-        return `enum: ${Array.from(values)
-            .map((v: any) => `"${v}"`)
-            .join(' | ')}`;
+        const values = Object.keys(baseSchema._def.entries);
+        return `enum: ${values.map((v: any) => `"${v}"`).join(' | ')}`;
     }
 
     if (baseSchema instanceof z.ZodArray) {
-        const elementType = getFieldType(baseSchema._def.type);
+        const elementType = getFieldType(baseSchema);
         return `array of ${elementType}`;
     }
 
@@ -192,7 +190,7 @@ function getFieldDescription(schema: z.ZodSchema): string | undefined {
 function getFieldDefault(schema: z.ZodSchema): any {
     try {
         if (schema instanceof z.ZodDefault) {
-            return schema._def.defaultValue();
+            return schema._def.defaultValue;
         }
     } catch {
         return undefined;

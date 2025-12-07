@@ -52,7 +52,7 @@ const inputSchema = z.object({
     perDomain: z.number().min(1).max(50).default(10).optional().describe('Maximum results per domain (default: 10)'),
 });
 
-const outputSchema = z.record(z.any()); // Dynamic per-domain structure
+const outputSchema = z.object(z.any()); // Dynamic per-domain structure
 
 type TInput = z.infer<typeof inputSchema>;
 type TOutput = z.infer<typeof outputSchema>;

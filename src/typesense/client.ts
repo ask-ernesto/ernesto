@@ -175,7 +175,7 @@ export async function searchMcpResources(
         // 'public' scope docs are always included via effectiveScopes
         return result.hits.map((hit) => {
             const doc = hit.document;
-            const highlights = hit.highlights || [] as any;
+            const highlights = hit.highlights || ([] as any);
 
             // Extract snippets from both description and content highlights
             const descHighlight = highlights.find((h) => h.field === 'description');

@@ -19,7 +19,7 @@ const inputSchema = z.object({
                     .string()
                     .describe('Route URI - format: domain://path (e.g., "data-warehouse://query", "dev://whitepaper", "qa://test-case")'),
                 params: z
-                    .record(z.unknown())
+                    .object(z.unknown())
                     .optional()
                     .describe("Parameters for the route (optional - informational routes typically don't need params)"),
             }),
@@ -28,17 +28,7 @@ const inputSchema = z.object({
         .describe('Array of routes to execute. Executed in parallel when possible.'),
 });
 
-// TODO either use a type from the SDK or nothing at all
-export interface GetTool {
-    name: 'get';
-    description: string;
-    inputSchema: typeof inputSchema;
-    handler: (params: z.infer<typeof inputSchema>) => Promise<{
-        content: { type: 'text'; text: string }[];
-    }>;
-}
-
-export function createGetTool(context: RouteContext): GetTool {
+export function createGetTool(context: RouteContext) {
     return {
         name: 'get',
         description: 'Retrieve or execute one or more routes in batch.',
