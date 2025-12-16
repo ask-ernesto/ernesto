@@ -10,7 +10,7 @@ import { mcpResourcesSchema, MCP_RESOURCES_COLLECTION, McpResourceDocument, McpR
 // eslint-disable-next-line import/no-cycle -- Type-only import, no runtime cycle
 import type { Ernesto } from '../Ernesto';
 
-const log = debug('ernesto:typesense');
+const log = debug('ernesto:typesense:client');
 
 /**
  * Get or create the MCP resources collection
@@ -37,7 +37,10 @@ async function ensureMcpResourcesCollection(ernesto: Ernesto): Promise<void> {
  * Index a batch of MCP resources
  * Uses upsert to handle updates gracefully
  */
-export async function indexMcpResources(ernesto: Ernesto, documents: McpResourceDocument[]): Promise<{ success: number; failed: number }> {
+export async function indexMcpResources(
+    ernesto: Ernesto,
+    documents: McpResourceDocument[]
+): Promise<{ success: number; failed: number }> {
     if (documents.length === 0) {
         return { success: 0, failed: 0 };
     }
@@ -47,7 +50,10 @@ export async function indexMcpResources(ernesto: Ernesto, documents: McpResource
         await ensureMcpResourcesCollection(ernesto);
 
         // Import documents with upsert (create or update)
-        const result = await ernesto.typesense.collections(MCP_RESOURCES_COLLECTION).documents().import(documents, { action: 'upsert' });
+        const result = await ernesto.typesense
+            .collections(MCP_RESOURCES_COLLECTION)
+            .documents()
+            .import(documents, { action: 'upsert' });
 
         // Count successes and failures
         const results = Array.isArray(result) ? result : [result];
@@ -62,10 +68,7 @@ export async function indexMcpResources(ernesto: Ernesto, documents: McpResource
 
         return { success, failed };
     } catch (error) {
-        log('Failed to index MCP resources', {
-            error,
-            documentCount: documents.length,
-        });
+        log('Failed to index MCP resources', { error, documentCount: documents.length });
         return { success: 0, failed: documents.length };
     }
 }
@@ -107,9 +110,17 @@ export async function searchMcpResources(
         weights?: string;
         filterBy?: string;
         scopes?: string[];
-    } = {},
+    } = {}
 ): Promise<McpResourceSearchResult[]> {
-    const { domain, limit = 10, mode = 'hybrid', queryBy = 'content,name,description', weights, filterBy, scopes } = options;
+    const {
+        domain,
+        limit = 10,
+        mode = 'hybrid',
+        queryBy = 'content,name,description',
+        weights,
+        filterBy,
+        scopes
+    } = options;
 
     try {
         // Build filter
@@ -117,11 +128,18 @@ export async function searchMcpResources(
         if (domain) filters.push(`domain:=${domain}`);
         if (filterBy) filters.push(filterBy);
 
-        // Scope-based filtering:
-        // - 'public' is a synthetic scope added to docs with no restrictions
-        // - Users always get 'public' docs plus any docs matching their scopes
-        const effectiveScopes = ['public', ...(scopes || [])];
-        filters.push(`scopes:=[${effectiveScopes.join(',')}]`);
+        // Scope-based pre-filtering (loose but fast):
+        // - Unrestricted docs (is_unrestricted:true) are always included
+        // - If user has scopes, also include docs with ANY matching scope
+        // - Post-filter will ensure user has ALL required scopes
+        const userScopes = scopes || [];
+        if (userScopes.length > 0) {
+            // Get unrestricted docs OR docs with at least one matching scope
+            filters.push(`is_unrestricted:true || scopes:[${userScopes.join(',')}]`);
+        } else {
+            // User has no scopes = only see unrestricted docs
+            filters.push(`is_unrestricted:true`);
+        }
 
         const filter_by = filters.length > 0 ? filters.join(' && ') : undefined;
 
@@ -165,35 +183,50 @@ export async function searchMcpResources(
             searchParams.num_typos = 1; // Some typo tolerance
         }
 
-        const result = await ernesto.typesense.collections<McpResourceDocument>(MCP_RESOURCES_COLLECTION).documents().search(searchParams);
+        const result = await ernesto.typesense
+            .collections<McpResourceDocument>(MCP_RESOURCES_COLLECTION)
+            .documents()
+            .search(searchParams);
 
         if (!result.hits || result.hits.length === 0) {
             return [];
         }
 
-        // Transform results - no post-filter needed since we filter by scopes in Typesense
-        // 'public' scope docs are always included via effectiveScopes
-        return result.hits.map((hit) => {
-            const doc = hit.document;
-            const highlights = hit.highlights || ([] as any);
+        // POST-FILTER: Ensure user has ALL scopes required by document
+        // - Empty scopes = unrestricted = visible to everyone
+        // - Non-empty scopes = restricted = user must have ALL of them
+        const filteredHits = result.hits.filter((hit) => {
+            const docScopes = hit.document.scopes || [];
 
-            // Extract snippets from both description and content highlights
-            const descHighlight = highlights.find((h) => h.field === 'description');
-            const contentHighlight = highlights.find((h) => h.field === 'content');
+            // Empty scopes = unrestricted = visible to everyone
+            if (docScopes.length === 0) return true;
 
-            return {
-                uri: doc.uri,
-                domain: doc.domain,
-                name: doc.name,
-                type: doc.type,
-                description: doc.description,
-                content_size: doc.content_size,
-                child_count: doc.child_count,
-                relevance: Number(hit.text_match_info?.score) || 0,
-                descriptionSnippet: descHighlight?.snippet,
-                contentSnippet: contentHighlight?.snippet,
-            };
+            // Document has scopes = user must have ALL of them
+            return docScopes.every(scope => userScopes.includes(scope));
         });
+
+        // Transform filtered results
+        return filteredHits
+            .map((hit) => {
+                const doc = hit.document;
+                const highlights = hit.highlights || [];
+
+                // Extract snippets from both description and content highlights
+                const descHighlight = highlights.find((h) => h.field === 'description');
+                const contentHighlight = highlights.find((h) => h.field === 'content');
+
+                return {
+                    uri: doc.uri,
+                    domain: doc.domain,
+                    name: doc.name,
+                    description: doc.description,
+                    content_size: doc.content_size,
+                    child_count: doc.child_count,
+                    relevance: Number(hit.text_match_info?.score) || 0,
+                    descriptionSnippet: descHighlight?.snippet,
+                    contentSnippet: contentHighlight?.snippet,
+                };
+            });
     } catch (error) {
         // If collection doesn't exist, return empty
         if (error.httpStatus === 404) {
@@ -216,7 +249,10 @@ export async function searchMcpResources(
  * @param domain - Optional domain filter
  * @returns Array of indexed documents
  */
-export async function exportAllDocuments(ernesto: Ernesto, domain?: string): Promise<McpResourceDocument[]> {
+export async function exportAllDocuments(
+    ernesto: Ernesto,
+    domain?: string
+): Promise<McpResourceDocument[]> {
     try {
         const documents: McpResourceDocument[] = [];
         const pageSize = 250; // Typesense max per_page
@@ -235,7 +271,10 @@ export async function exportAllDocuments(ernesto: Ernesto, domain?: string): Pro
                 searchParams.filter_by = `domain:=${domain}`;
             }
 
-            const result = await ernesto.typesense.collections(MCP_RESOURCES_COLLECTION).documents().search(searchParams);
+            const result = await ernesto.typesense
+                .collections(MCP_RESOURCES_COLLECTION)
+                .documents()
+                .search(searchParams);
 
             if (result.hits && result.hits.length > 0) {
                 for (const hit of result.hits) {
@@ -248,9 +287,9 @@ export async function exportAllDocuments(ernesto: Ernesto, domain?: string): Pro
             }
         }
 
-        log('Exported documents from index', {
+        log('[Typesense] Exported documents from index', {
             total: documents.length,
-            domain: domain || 'all',
+            domain: domain || 'all'
         });
 
         return documents;
@@ -273,7 +312,10 @@ export async function exportAllDocuments(ernesto: Ernesto, domain?: string): Pro
  * @param sourceId - Source identifier to filter by
  * @returns Array of indexed documents for this source
  */
-export async function exportSourceDocuments(ernesto: Ernesto, sourceId: string): Promise<McpResourceDocument[]> {
+export async function exportSourceDocuments(
+    ernesto: Ernesto,
+    sourceId: string
+): Promise<McpResourceDocument[]> {
     try {
         const documents: McpResourceDocument[] = [];
         const pageSize = 250;
@@ -303,9 +345,9 @@ export async function exportSourceDocuments(ernesto: Ernesto, sourceId: string):
             }
         }
 
-        log('Exported source documents from index', {
+        log('[Typesense] Exported source documents from index', {
             sourceId,
-            count: documents.length,
+            count: documents.length
         });
 
         return documents;
@@ -323,7 +365,9 @@ export async function exportSourceDocuments(ernesto: Ernesto, sourceId: string):
  */
 export async function hasIndexedDocuments(ernesto: Ernesto): Promise<boolean> {
     try {
-        const collection = await ernesto.typesense.collections(MCP_RESOURCES_COLLECTION).retrieve();
+        const collection = await ernesto.typesense
+            .collections(MCP_RESOURCES_COLLECTION)
+            .retrieve();
         return (collection.num_documents || 0) > 0;
     } catch (error) {
         if (error.httpStatus === 404) {
@@ -346,12 +390,15 @@ export async function hasIndexedDocuments(ernesto: Ernesto): Promise<boolean> {
 export async function getIndexAge(ernesto: Ernesto): Promise<{ ageMs: number | null }> {
     try {
         // Get oldest document by indexed_at
-        const result = await ernesto.typesense.collections(MCP_RESOURCES_COLLECTION).documents().search({
-            q: '*',
-            query_by: 'name',
-            per_page: 1,
-            sort_by: 'indexed_at:asc',
-        });
+        const result = await ernesto.typesense
+            .collections(MCP_RESOURCES_COLLECTION)
+            .documents()
+            .search({
+                q: '*',
+                query_by: 'name',
+                per_page: 1,
+                sort_by: 'indexed_at:asc',
+            });
 
         const oldestDoc = result.hits?.[0]?.document as McpResourceDocument | undefined;
         const ageMs = oldestDoc?.indexed_at ? Date.now() - oldestDoc.indexed_at : null;
@@ -377,12 +424,15 @@ export async function getMcpResourceStats(ernesto: Ernesto): Promise<{
         const collection = await ernesto.typesense.collections(MCP_RESOURCES_COLLECTION).retrieve();
 
         // Get counts by domain using facet search
-        const result = await ernesto.typesense.collections(MCP_RESOURCES_COLLECTION).documents().search({
-            q: '*',
-            query_by: 'name',
-            facet_by: 'domain',
-            per_page: 0,
-        });
+        const result = await ernesto.typesense
+            .collections(MCP_RESOURCES_COLLECTION)
+            .documents()
+            .search({
+                q: '*',
+                query_by: 'name',
+                facet_by: 'domain',
+                per_page: 0,
+            });
 
         const byDomain: Record<string, number> = {};
         if (result.facet_counts) {
@@ -415,10 +465,13 @@ export async function getMcpResourceStats(ernesto: Ernesto): Promise<{
  * Used to decide whether to skip fetching from third-party sources.
  *
  * @param ernesto - Ernesto instance
- * @param sourceId - Source identifier (e.g., "clickup__marketing")
+ * @param sourceId - Source identifier
  * @returns Age in milliseconds, document count, or null if no documents for this source
  */
-export async function getSourceFreshness(ernesto: Ernesto, sourceId: string): Promise<{ ageMs: number; documentCount: number } | null> {
+export async function getSourceFreshness(
+    ernesto: Ernesto,
+    sourceId: string
+): Promise<{ ageMs: number; documentCount: number } | null> {
     try {
         // Get oldest document for this source
         const result = await ernesto.typesense
@@ -459,7 +512,10 @@ export async function getSourceFreshness(ernesto: Ernesto, sourceId: string): Pr
  * @param sourceId - Source identifier to delete documents for
  * @returns Number of documents deleted
  */
-export async function deleteSourceDocuments(ernesto: Ernesto, sourceId: string): Promise<number> {
+export async function deleteSourceDocuments(
+    ernesto: Ernesto,
+    sourceId: string
+): Promise<number> {
     try {
         const result = await ernesto.typesense
             .collections(MCP_RESOURCES_COLLECTION)
@@ -484,17 +540,23 @@ export async function deleteSourceDocuments(ernesto: Ernesto, sourceId: string):
  * Used for on-demand content retrieval instead of keeping all content in memory.
  *
  * @param ernesto - Ernesto instance
- * @param uri - Route URI (e.g., "meetings://project-sync/2025-01-15")
+ * @param uri - Route URI
  * @returns Document content or null if not found
  */
-export async function getDocumentByUri(ernesto: Ernesto, uri: string): Promise<McpResourceDocument | null> {
+export async function getDocumentByUri(
+    ernesto: Ernesto,
+    uri: string
+): Promise<McpResourceDocument | null> {
     try {
         // Use document ID lookup (base64 of URI) for exact match
         // This is more reliable than filter_by for URIs with special characters
         const docId = Buffer.from(uri).toString('base64');
 
         try {
-            const doc = await ernesto.typesense.collections(MCP_RESOURCES_COLLECTION).documents(docId).retrieve();
+            const doc = await ernesto.typesense
+                .collections(MCP_RESOURCES_COLLECTION)
+                .documents(docId)
+                .retrieve();
 
             return doc as McpResourceDocument;
         } catch (retrieveError) {

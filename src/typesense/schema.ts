@@ -17,13 +17,8 @@ export const mcpResourcesSchema: CollectionCreateSchema = {
         { name: 'uri', type: 'string', facet: false, index: true },
         { name: 'domain', type: 'string', facet: true, index: true },
         { name: 'path', type: 'string', facet: false, index: true },
-        {
-            name: 'scopes',
-            type: 'string[]',
-            facet: false,
-            index: true,
-            optional: true,
-        },
+        { name: 'scopes', type: 'string[]', facet: false, index: true, optional: true },
+        { name: 'is_unrestricted', type: 'bool', facet: false, index: true },
 
         // === Source Tracking ===
         // Identifies which extractor/source produced this document
@@ -39,7 +34,6 @@ export const mcpResourcesSchema: CollectionCreateSchema = {
         // === Metadata for Ranking ===
         { name: 'content_size', type: 'int32', facet: false, index: true },
         { name: 'child_count', type: 'int32', facet: false, index: true },
-        { name: 'type', type: 'string', facet: true, index: true }, // Route type: instruction, resource, template (tools excluded from index)
         { name: 'resource_type', type: 'string', facet: true, index: true }, // Semantic type: column, table, page, doc, etc.
         { name: 'path_segment', type: 'string', facet: true, index: true }, // First path segment for filtering (aggregates, facts, dimensions, etc.)
 
@@ -64,12 +58,12 @@ export interface McpResourceDocument {
     path: string;
     source_id: string; // Identifies which extractor/source produced this document
     scopes?: string[];
+    is_unrestricted: boolean; // Computed: true if scopes is empty/undefined
     name: string;
     content: string;
     description: string;
     content_size: number;
     child_count: number;
-    type: string; // Route type: instruction, resource, template (tools excluded)
     resource_type: string; // Semantic type: column, table, page, doc, etc.
     path_segment: string; // First path segment for filtering (aggregates, facts, dimensions, etc.)
     quality_score: number; // Pre-computed 0-100 quality score

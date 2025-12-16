@@ -1,5 +1,5 @@
-import { PipelineConfig } from './knowledge/pipeline-types';
-import { Route, DomainSearchConfig } from './types';
+import { PipelineConfig } from './types';
+import { Route, DomainSearchConfig } from './route';
 
 /**
  * Domain configuration
@@ -7,7 +7,7 @@ import { Route, DomainSearchConfig } from './types';
  * Represents a complete domain with all its routes.
  */
 export interface Domain {
-    /** Domain name (e.g., "data-warehouse", "qa") */
+    /** Domain name */
     name: string;
 
     /** Domain description */
@@ -15,10 +15,10 @@ export interface Domain {
 
     /**
      * All routes for this domain
-     * - Instructions: workflow guidance that unlocks tools (data-warehouse://instructions/query-builder)
-     * - Tools: operations with input schemas, hidden from search (data-warehouse://query)
-     * - Templates: pre-built operations returning MarkdownUI (data-warehouse://templates/revenue-breakdown)
-     * - Resources: content routes generated from extractors (data-warehouse://facts/fact_orders)
+     * - Instructions: workflow guidance that unlocks tools
+     * - Tools: operations with input schemas, hidden from search
+     * - Templates: pre-built operations returning MarkdownUI
+     * - Resources: content routes generated from extractors
      */
     routes: Route[];
 
@@ -39,7 +39,7 @@ export interface Domain {
     /**
      * Required scopes for this domain (optional)
      * If specified, all routes in this domain require users to have these scopes.
-     * Example: ['data-warehouse-admin'] restricts entire domain to users with that permission.
+     * Example: ['ernesto-admin'] restricts entire domain to users with that permission.
      */
     requiredScopes?: string[];
 }
@@ -68,7 +68,7 @@ export interface Domain {
 export function createDomain(config: {
     name: string;
     description: string;
-    routes: Route<any, any>[];
+    routes: Route<any>[];
     extractors?: PipelineConfig[];
     searchConfig?: DomainSearchConfig;
     requiredScopes?: string[];
@@ -79,6 +79,6 @@ export function createDomain(config: {
         routes: config.routes,
         ...(config.extractors && { extractors: config.extractors }),
         ...(config.searchConfig && { searchConfig: config.searchConfig }),
-        ...(config.requiredScopes && { requiredScopes: config.requiredScopes }),
+        ...(config.requiredScopes && { requiredScopes: config.requiredScopes })
     };
 }

@@ -1,22 +1,21 @@
 /**
- * Ernesto Internal Router
- * Used to build and make available Domain Routes
+ * Ernesto Router
  *
- * Routes get()/execute() calls to appropriate routes based on URI.
+ * Routes execute() calls to appropriate routes based on URI.
+ * One pattern: every route has execute() returning GuidedContent.
  */
 
-import { Route, RouteContext, RouteResult } from './types';
+import { Route, RouteContext, RouteResult } from './route';
 import debug from 'debug';
-import { applyOutputFormatter } from './utils';
 import { getDocumentByUri } from './typesense/client';
+import { formatZodSchemaForAgent } from './schema-formatter';
+import { buildGuidanceSection, RouteInfo } from './guidance';
 
 const log = debug('ernesto:router');
 
-/**
- * Summarize Zod validation errors for user-friendly output
- */
+const MAX_CALL_DEPTH = 10;
+
 function summarizeValidationErrors(errors: any[]): any {
-    // Group errors by path for better readability
     const errorsByPath = new Map<string, any[]>();
 
     for (const error of errors) {
@@ -27,7 +26,6 @@ function summarizeValidationErrors(errors: any[]): any {
         errorsByPath.get(path)!.push(error);
     }
 
-    // If too many unique paths, summarize
     if (errorsByPath.size > 10) {
         const pathCounts = new Map<string, number>();
         for (const error of errors) {
@@ -39,36 +37,23 @@ function summarizeValidationErrors(errors: any[]): any {
             summary: `Validation failed for ${errorsByPath.size} fields across ${errors.length} errors`,
             error_counts: Object.fromEntries(pathCounts),
             sample_errors: errors.slice(0, 3),
-            hint: 'Check route output matches schema. Full errors logged server-side.',
+            hint: 'Check route output matches schema. Full errors logged server-side.'
         };
     }
 
-    // Return detailed errors for small counts
     return errors;
 }
 
 /**
- * Route registry
- *
- * Maps route URIs to route implementations.
+ * Route registry - maps URIs to route implementations
  */
 export class RouteRegistry {
     private routes = new Map<string, Route>();
 
-    /**
-     * Register a route (silent - no per-route logging)
-     *
-     * Overwrites existing routes by default.
-     */
     register(route: Route): void {
         this.routes.set(route.route, route);
     }
 
-    /**
-     * Register multiple routes
-     *
-     * Logs summary at end, not per-route.
-     */
     registerAll(routes: Route[]): void {
         const before = this.routes.size;
 
@@ -81,58 +66,38 @@ export class RouteRegistry {
         log('Batch registered', {
             total: routes.length,
             added,
-            replaced,
+            replaced
         });
     }
 
-    /**
-     * Get route by URI
-     */
     get(route: string): Route | undefined {
         return this.routes.get(route);
     }
 
-    /**
-     * Get all registered routes
-     */
     getAll(): Route[] {
         return Array.from(this.routes.values());
     }
 
-    /**
-     * Clear all registered routes
-     *
-     * Used during restart to remove stale routes before re-registering.
-     */
     clear(): void {
         const count = this.routes.size;
         this.routes.clear();
         log('Cleared all routes', { count });
     }
 
-    /**
-     * Get routes filtered by permissions
-     */
     getVisible(ctx: RouteContext): Route[] {
         const userPermissions = ctx.scopes || [];
 
-        return this.getAll().filter((route) => {
-            // No permission requirement = visible to all
+        return this.getAll().filter(route => {
             if (!route.requiredScopes || route.requiredScopes.length === 0) {
                 return true;
             }
-
-            // Check if user has all required permissions
-            return route.requiredScopes.every((p) => userPermissions.includes(p));
+            return route.requiredScopes.every(p => userPermissions.includes(p));
         });
     }
 }
 
 /**
- * Fetch resource directly from Typesense
- *
- * Used for resources that don't have registered routes.
- * This bypasses route generation - content is served directly from the index.
+ * Fetch resource directly from Typesense (for indexed content)
  */
 async function fetchFromTypesense(route: string, ctx: RouteContext): Promise<RouteResult> {
     try {
@@ -155,15 +120,7 @@ async function fetchFromTypesense(route: string, ctx: RouteContext): Promise<Rou
 
         return {
             success: true,
-            data: {
-                uri: route,
-                domain: doc.domain,
-                name: doc.name,
-                type: doc.type,
-                content: doc.content,
-                content_size: doc.content_size,
-                child_count: doc.child_count || 0,
-            },
+            data: doc.content,
         };
     } catch (error: any) {
         log('Typesense fetch failed', { route, error });
@@ -177,49 +134,84 @@ async function fetchFromTypesense(route: string, ctx: RouteContext): Promise<Rou
     }
 }
 
+function hasPermissions(route: Route, scopes?: string[]): boolean {
+    if (!route.requiredScopes || route.requiredScopes.length === 0) {
+        return true;
+    }
+    const userPermissions = scopes || [];
+    return route.requiredScopes.every(p => userPermissions.includes(p));
+}
+
+function createRouteLookup(ctx: RouteContext): (route: string) => RouteInfo | undefined {
+    return (uri: string) => {
+        const routeDef = ctx.ernesto.routeRegistry.get(uri);
+        if (!routeDef) {
+            return undefined;
+        }
+
+        if (!hasPermissions(routeDef, ctx.scopes)) {
+            return undefined;
+        }
+
+        const parameters = formatZodSchemaForAgent(routeDef.inputSchema, 'Parameters');
+
+        return {
+            route: routeDef.route,
+            description: routeDef.description,
+            inputSchema: parameters || undefined,
+            freshness: routeDef.freshness,
+        };
+    };
+}
+
 /**
  * Execute a route
- *
- * @param route - Route URI (e.g., "data-warehouse://query")
- * @param params - Parameters matching route's input schema
- * @param ctx - Execution context
- * @returns Route result
  */
-export async function routeExecution(route: string, params: unknown, ctx: RouteContext): Promise<RouteResult> {
+export async function routeExecution(
+    route: string,
+    params: unknown,
+    ctx: RouteContext
+): Promise<RouteResult> {
     try {
-        // Find route in registry (tools, templates, instructions)
-        const routeDef = ctx.ernesto.routeRegistry.get(route);
+        const callStack = ctx.callStack || [];
 
-        // If not in registry, try Typesense (resources)
+        // Cycle detection
+        if (callStack.includes(route)) {
+            log('Cycle detected', { route, callStack });
+            return {
+                success: false,
+                error: { code: 'CYCLE_DETECTED', message: `Cyclic call to ${route}` },
+            };
+        }
+
+        // Depth limit
+        if (callStack.length >= MAX_CALL_DEPTH) {
+            log('Max depth exceeded', { route, depth: callStack.length });
+            return {
+                success: false,
+                error: { code: 'MAX_DEPTH_EXCEEDED', message: `Call depth limit (${MAX_CALL_DEPTH}) reached` },
+            };
+        }
+
+        // Find route in registry
+        const routeDef = ctx.ernesto.routeRegistry.get(route);
         if (!routeDef) {
             return fetchFromTypesense(route, ctx);
         }
 
-        // Check permissions
-        if (routeDef.requiredScopes && routeDef.requiredScopes.length > 0) {
-            const userPermissions = ctx.scopes || [];
-            const hasPermissions = routeDef.requiredScopes.every((p) => userPermissions.includes(p));
-
-            if (!hasPermissions) {
-                return {
-                    success: false,
-                    error: {
-                        code: 'PERMISSION_DENIED',
-                        message: `Missing required permissions: ${routeDef.requiredScopes.join(', ')}`,
-                    },
-                };
-            }
+        // Permission check
+        if (!hasPermissions(routeDef, ctx.scopes)) {
+            return {
+                success: false,
+                error: { code: 'PERMISSION_DENIED', message: `Missing required permissions: ${routeDef.requiredScopes?.join(', ')}` },
+            };
         }
 
-        // Validate input schema (if route has one)
+        // Input validation
         if (routeDef.inputSchema) {
             const validated = routeDef.inputSchema.safeParse(params);
             if (!validated.success) {
-                log('Input validation failed', {
-                    route,
-                    errors: validated.error.issues,
-                });
-
+                log('Input validation failed', { route, errors: validated.error.issues });
                 return {
                     success: false,
                     error: {
@@ -232,106 +224,41 @@ export async function routeExecution(route: string, params: unknown, ctx: RouteC
             params = validated.data;
         }
 
-        // Execute route
-        log('Executing route', { route, ctx: ctx.requestId });
+        const childCtx: RouteContext = {
+            ...ctx,
+            callStack: [...callStack, route]
+        };
+
+        log('Executing route', { route, ctx: ctx.requestId, depth: callStack.length });
         const startTime = Date.now();
 
-        const result = await routeDef.execute(params, ctx);
+        // Execute route
+        const { content, guidance } = await routeDef.execute(params, childCtx);
 
         const duration = Date.now() - startTime;
         log('Route executed', { route, duration });
 
-        // Validate output schema
-        const validatedOutput = routeDef.outputSchema.safeParse(result);
-        if (!validatedOutput.success) {
-            log('Output validation failed', {
-                route,
-                errorCount: validatedOutput.error.issues.length,
-                errors: validatedOutput.error.issues,
-            });
-
-            return {
-                success: false,
-                error: {
-                    code: 'INVALID_OUTPUT',
-                    message: 'Route returned invalid output',
-                    details: summarizeValidationErrors(validatedOutput.error.issues),
-                },
-            };
-        }
-
-        // Apply output formatter if specified
-        let finalData = validatedOutput.data;
-        if (routeDef.outputFormatter) {
-            try {
-                const formatted = applyOutputFormatter(validatedOutput.data, routeDef.outputFormatter);
-                log('Applied output formatter', {
-                    route,
-                    formatter: typeof routeDef.outputFormatter === 'string' ? routeDef.outputFormatter : 'custom',
-                });
-                finalData = formatted;
-            } catch (error) {
-                log('Output formatter failed', { route, error });
-                // Don't fail the request - fall back to unformatted data
-            }
-        }
-
-        // For instructions with unlocks, include the unlocked tools in the response
-        if (routeDef.type === 'instruction' && routeDef.unlocks && routeDef.unlocks.length > 0) {
-            const unlockedTools: Record<string, unknown>[] = [];
-            for (const toolRoute of routeDef.unlocks) {
-                const toolDef = ctx.ernesto.routeRegistry.get(toolRoute);
-                if (toolDef) {
-                    // Check permissions for this tool
-                    if (toolDef.requiredScopes && toolDef.requiredScopes.length > 0) {
-                        const userPermissions = ctx.scopes || [];
-                        const hasPermissions = toolDef.requiredScopes.every((p) => userPermissions.includes(p));
-                        if (!hasPermissions) continue;
-                    }
-
-                    // Format parameters from Zod schema
-                    const { formatZodSchemaForAgent } = require('./schema-formatter');
-                    const parameters = formatZodSchemaForAgent(toolDef.inputSchema, 'Parameters');
-
-                    unlockedTools.push({
-                        route: toolDef.route,
-                        description: toolDef.description,
-                        freshness: toolDef.freshness,
-                        ...(parameters && { parameters }),
-                        ...(toolDef.requiredScopes && {
-                            permissions: toolDef.requiredScopes,
-                        }),
-                    });
-                }
-            }
-
-            if (unlockedTools.length > 0) {
-                // Augment the response with unlocked tools
-                if (typeof finalData === 'object' && finalData !== null) {
-                    finalData = { ...finalData, tools: unlockedTools };
-                } else {
-                    // For string content (like markdown instructions), wrap in object
-                    finalData = { content: finalData, tools: unlockedTools };
-                }
-
-                log('Instruction unlocked tools', {
-                    route,
-                    toolCount: unlockedTools.length,
-                });
+        // Append guidance if present
+        let finalContent = content;
+        if (guidance.length > 0) {
+            const routeLookup = createRouteLookup(ctx);
+            const guidanceSection = buildGuidanceSection(guidance, routeLookup);
+            if (guidanceSection) {
+                finalContent = `${content}\n\n${guidanceSection}`;
             }
         }
 
         return {
             success: true,
-            data: finalData,
+            data: finalContent,
         };
-    } catch (error) {
-        log('Route execution failed', { route, error });
+    } catch (error: any) {
+        log('Unexpected error in route execution', { route, error });
         return {
             success: false,
             error: {
-                code: 'EXECUTION_ERROR',
-                message: error.message || 'Route execution failed',
+                code: 'UNEXPECTED_ERROR',
+                message: error.message || 'Unexpected error in route execution',
                 details: error.stack,
             },
         };

@@ -34,8 +34,9 @@ export function formatZodSchemaForAgent(schema: z.ZodSchema | undefined, name?: 
 
         // Handle other types
         return formatZodType(schema);
-    } catch (error) {
-        // Fallback to simple type description
+    } catch (error: any) {
+        // Fallback to simple type description with error for debugging
+        console.error('[schema-formatter] Error formatting schema:', error.message, error.stack);
         return `Schema: ${schema.constructor.name}`;
     }
 }
@@ -44,23 +45,28 @@ export function formatZodSchemaForAgent(schema: z.ZodSchema | undefined, name?: 
  * Format a Zod object schema (compact format)
  */
 function formatZodObject(schema: z.ZodObject<any>): string {
-    const shape = schema.shape;
-    const keys = Object.keys(shape);
+    try {
+        const shape = schema.shape;
+        const keys = Object.keys(shape);
 
-    if (keys.length === 0) {
-        return 'No parameters required';
+        if (keys.length === 0) {
+            return 'No parameters required';
+        }
+
+        const fields: string[] = [];
+
+        for (const key of keys) {
+            const fieldSchema = shape[key];
+            const fieldInfo = formatFieldCompact(key, fieldSchema);
+            fields.push(fieldInfo);
+        }
+
+        // Return compact comma-separated list
+        return fields.join(', ');
+    } catch (error: any) {
+        console.error('[schema-formatter] Error in formatZodObject:', error.message);
+        throw error;
     }
-
-    const fields: string[] = [];
-
-    for (const key of keys) {
-        const fieldSchema = shape[key];
-        const fieldInfo = formatFieldCompact(key, fieldSchema);
-        fields.push(fieldInfo);
-    }
-
-    // Return compact comma-separated list
-    return fields.join(', ');
 }
 
 /**
@@ -144,12 +150,33 @@ function getFieldType(schema: z.ZodSchema): string {
     }
 
     if (baseSchema instanceof z.ZodEnum) {
-        const values = Object.keys(baseSchema._def.entries);
-        return `enum: ${values.map((v: any) => `"${v}"`).join(' | ')}`;
+        // Try multiple ways to extract enum values
+        const def = (baseSchema as any)._def;
+
+        // Try _def.entries (modern zod enum format)
+        let values = def.entries;
+
+        // Fall back to _def.values (older format)
+        if (!values) {
+            values = def.values;
+        }
+
+        // Fall back to _def.options (alternative format)
+        if (!values) {
+            values = def.options;
+        }
+
+        if (Array.isArray(values)) {
+            return `enum: ${values.map((v: any) => `"${v}"`).join(' | ')}`;
+        } else if (values && typeof values === 'object') {
+            return `enum: ${Object.values(values).map((v: any) => `"${v}"`).join(' | ')}`;
+        }
+
+        return 'enum';
     }
 
     if (baseSchema instanceof z.ZodArray) {
-        const elementType = getFieldType(baseSchema);
+        const elementType = getFieldType((baseSchema as any)._def.type as z.ZodSchema);
         return `array of ${elementType}`;
     }
 
@@ -190,7 +217,8 @@ function getFieldDescription(schema: z.ZodSchema): string | undefined {
 function getFieldDefault(schema: z.ZodSchema): any {
     try {
         if (schema instanceof z.ZodDefault) {
-            return schema._def.defaultValue;
+            const defaultValue = (schema as any)._def.defaultValue;
+            return typeof defaultValue === 'function' ? defaultValue() : defaultValue;
         }
     } catch {
         return undefined;

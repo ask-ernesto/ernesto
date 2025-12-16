@@ -10,9 +10,13 @@
  */
 
 import debug from 'debug';
-import { clearAllResources, deleteSourceDocuments, getSourceFreshness } from './typesense/client';
-import { generateSourceId } from './knowledge/ContentPipeline';
-import { DEFAULT_CACHE_TTL_MS } from './knowledge/pipeline-types';
+import {
+    clearAllResources,
+    deleteSourceDocuments,
+    getSourceFreshness,
+} from './typesense/client';
+import { generateSourceId } from './pipelines';
+import { DEFAULT_CACHE_TTL_MS } from './types';
 import type { Ernesto } from './Ernesto';
 
 const log = debug('ernesto:lifecycle');
@@ -261,7 +265,10 @@ export class LifecycleService {
             if (!domain.extractors) continue;
 
             for (const extractor of domain.extractors) {
-                const sourceId = generateSourceId(extractor.source.name, extractor.basePath || '');
+                const sourceId = generateSourceId(
+                    extractor.source.name,
+                    extractor.basePath || ''
+                );
                 const isLocal = extractor.source.name.startsWith('local:');
 
                 result.push({
@@ -288,7 +295,10 @@ export class LifecycleService {
             if (!domain.extractors) continue;
 
             for (const extractor of domain.extractors) {
-                const id = generateSourceId(extractor.source.name, extractor.basePath || '');
+                const id = generateSourceId(
+                    extractor.source.name,
+                    extractor.basePath || ''
+                );
                 if (id === sourceId) {
                     return { domainName: domain.name, extractor };
                 }

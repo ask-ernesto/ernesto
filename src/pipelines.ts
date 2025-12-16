@@ -1,11 +1,5 @@
 /**
- * Content Pipeline - Elegant Composition of Source + Formats
- *
- * Philosophy:
- * - Simple, predictable flow: Source → Format → Resources
- * - Automatic format selection by content type
- * - Stateless, functional composition
- * - Errors are values, not exceptions
+ * Content Pipeline - Composition of Source + Formats
  *
  * Example usage:
  * ```typescript
@@ -16,32 +10,15 @@
  *   basePath: '/legal'
  * });
  *
- * // ClickUp docs with multiple formats
- * const pipeline = new ContentPipeline({
- *   source: new ClickUpSource(client, { spaceId: '123' }),
- *   formats: [
- *     new ClickUpDocFormat(),
- *     new MarkdownFormat()  // Fallback for markdown content
- *   ],
- *   basePath: '/marketing'
- * });
- *
  * // Fetch resources
  * const resources = await pipeline.fetchResources();
  * ```
- *
- * The inevitable design:
- * 1. Source provides documents
- * 2. For each document, find matching format by contentType
- * 3. Format parses content into resource tree
- * 4. Aggregate all resources
  */
 
-import { ContentSource, ContentFormat, PipelineConfig, RawDocument, DEFAULT_CACHE_TTL_MS } from './pipeline-types';
-import { ResourceNode } from './types';
+import { ContentSource, ContentFormat, PipelineConfig, RawDocument, DEFAULT_CACHE_TTL_MS, ResourceNode } from './types';
 import debug from 'debug';
 
-const log = debug('ernesto:content-pipeline');
+const log = debug('ernesto:pipelines');
 
 /**
  * Generate a deterministic source ID from pipeline configuration
@@ -133,7 +110,7 @@ export class ContentPipeline {
             log('No format handler found', {
                 docId: doc.id,
                 contentType: doc.contentType,
-                availableFormats: this.formats.map((f) => f.name),
+                availableFormats: this.formats.map(f => f.name),
             });
             return [];
         }
@@ -206,11 +183,11 @@ export class ContentPipeline {
         formats: string[];
         basePath: string;
         cacheTtlMs: number;
-    } {
+        } {
         return {
             source: this.source.name,
             sourceId: this.sourceId,
-            formats: this.formats.map((f) => f.name),
+            formats: this.formats.map(f => f.name),
             basePath: this.basePath,
             cacheTtlMs: this.cacheTtlMs,
         };

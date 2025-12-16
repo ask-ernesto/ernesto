@@ -1,34 +1,40 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { DomainRegistry } from './domain-registry';
 import { RouteRegistry } from './router';
-import { Route, RouteContext } from './types';
+import { Route, RouteContext } from './route';
 import { Domain } from './domain';
 import { createSearchTool } from './tools/search';
 import { createGetTool } from './tools/get';
-import { GlobalKnowledgeCache } from './knowledge/GlobalKnowledgeCache';
 import debug from 'debug';
-import { ContentPipeline, generateSourceId } from './knowledge/ContentPipeline';
-import { ResourceNode } from './knowledge/types';
-import { buildContent } from './knowledge/resource-helpers';
-import { clearAllResources, deleteSourceDocuments, exportSourceDocuments, getSourceFreshness, indexMcpResources } from './typesense/client';
+import { ContentPipeline, generateSourceId } from './pipelines';
+import { ResourceNode, DEFAULT_CACHE_TTL_MS, PipelineConfig } from './types';
+import {
+    clearAllResources,
+    deleteSourceDocuments,
+    exportSourceDocuments,
+    getSourceFreshness,
+    indexMcpResources,
+} from './typesense/client';
 import { McpResourceDocument } from './typesense/schema';
-import { DEFAULT_CACHE_TTL_MS, PipelineConfig } from './knowledge/pipeline-types';
 import { Client as TypesenseClient } from 'typesense';
 import { LifecycleService } from './LifecycleService';
+import { InstructionRegistry } from './instructions/registry';
+import { buildInstructionContext } from './instructions/context';
 
-const log = debug('ernesto:ernesto');
+const log = debug('ernesto');
 
 interface ErnestoOptions {
     domains: Domain[];
     routes: Route[];
     typesense: TypesenseClient;
+    instructionRegistry: InstructionRegistry;
 }
 
 /**
  * Ernesto - The unified knowledge system
  *
  * ARCHITECTURE:
- * - Sources: Where data comes from (local files, GitHub, data warehouse, etc.)
+ * - Sources: Where data comes from (local files, external APIs, etc.)
  * - Cache: In-memory storage for fast route serving
  * - Index: Typesense for semantic search and freshness tracking
  * - Routes: HTTP-like endpoints (domain://path) for accessing knowledge
@@ -45,14 +51,15 @@ interface ErnestoOptions {
 export class Ernesto {
     readonly domainRegistry = new DomainRegistry();
     readonly routeRegistry = new RouteRegistry();
-    readonly globalKnowledgeCache = new GlobalKnowledgeCache();
     readonly typesense: TypesenseClient;
+    readonly instructionRegistry: InstructionRegistry;
     readonly lifecycle = new LifecycleService(this);
 
-    constructor({ domains, routes, typesense }: ErnestoOptions) {
+    constructor({ domains, routes, typesense, instructionRegistry }: ErnestoOptions) {
         this.domainRegistry.registerAll(domains);
         this.routeRegistry.registerAll(routes);
         this.typesense = typesense;
+        this.instructionRegistry = instructionRegistry;
     }
 
     // ============================================================
@@ -62,43 +69,58 @@ export class Ernesto {
     /**
      * Attach Ernesto to an MCP server
      */
-    public attachToMcpServer(server: McpServer, context: RouteContext) {
+    public async attachToMcpServer(server: McpServer, context: RouteContext): Promise<void> {
         context.ernesto = this;
 
-        const searchTool = createSearchTool(context);
-        const getTool = createGetTool(context);
+        // Build instruction context
+        const instructionContext = await buildInstructionContext(this);
 
-        server.registerTool(
-            searchTool.name,
-            {
-                description: searchTool.description,
-                inputSchema: searchTool.inputSchema,
-            },
-            searchTool.handler,
+        // Create tools with rendered descriptions
+        const searchTool = createSearchTool(
+            context,
+            this.instructionRegistry.renderAskTool(instructionContext)
+        );
+        const getTool = createGetTool(
+            context,
+            this.instructionRegistry.renderGetTool(instructionContext)
         );
 
-        server.registerTool(
-            getTool.name,
-            {
-                description: getTool.description,
-                inputSchema: getTool.inputSchema,
-            },
-            getTool.handler,
-        );
+        server.registerTool(searchTool.name, {
+            description: searchTool.description,
+            inputSchema: searchTool.inputSchema,
+        }, searchTool.handler);
+
+        server.registerTool(getTool.name, {
+            description: getTool.description,
+            inputSchema: getTool.inputSchema,
+        }, getTool.handler);
+
+        // Store rendered instructions on server for later access (used by HTTP server)
+        const instructions = this.instructionRegistry.render(instructionContext);
+        (server as any).__ernestoInstructions = instructions;
     }
 
     /**
      * Clear in-memory state (for restart/rebuild operations)
      */
     public clearState(): void {
-        this.globalKnowledgeCache.clearAll();
         this.routeRegistry.clear();
+    }
+
+    /**
+     * Build instruction context from current state
+     */
+    public async buildInstructionContext() {
+        return buildInstructionContext(this);
     }
 
     /**
      * Re-fetch a source and index it (exposed for LifecycleService)
      */
-    public async refetchSource(domainName: string, extractor: any): Promise<{ resourceCount: number }> {
+    public async refetchSource(
+        domainName: string,
+        extractor: any
+    ): Promise<{ resourceCount: number }> {
         return this.fetchAndIndexSource(domainName, extractor);
     }
 
@@ -144,10 +166,10 @@ export class Ernesto {
             }
         }
 
-        // Step 4: Index static routes (instructions, templates) to Typesense for search
-        await this.indexStaticRoutes();
+        // Note: Static routes (searchable: true) are served directly from RouteRegistry.
+        // No indexing needed - they're always surfaced in ask() results.
 
-        // Note: Background refreshes should be handled externally (e.g., cron job or worker)
+        // Note: Background refreshes should be handled externally
 
         const duration = Date.now() - startTime;
         log('Initialization complete', {
@@ -173,7 +195,6 @@ export class Ernesto {
 
         try {
             // Clear in-memory state
-            this.globalKnowledgeCache.clearAll();
             this.routeRegistry.clear();
 
             // Re-register static routes
@@ -219,7 +240,6 @@ export class Ernesto {
             await clearAllResources(this);
 
             // Clear in-memory state
-            this.globalKnowledgeCache.clearAll();
             this.routeRegistry.clear();
 
             // Re-register static routes
@@ -293,83 +313,6 @@ export class Ernesto {
         }
     }
 
-    /**
-     * Rebuild from index (diagnostic tool)
-     *
-     * In the new unified flow, this is essentially what initialize() does
-     * for fresh sources. This method is kept for backward compatibility
-     * with the dev://rebuild-from-index handler.
-     */
-    public async rebuildFromIndex(): Promise<{
-        success: boolean;
-        routesRebuilt: number;
-        byDomain: Record<string, number>;
-        error?: string;
-    }> {
-        try {
-            // This is essentially a restart - fresh sources load from index
-            await this.restart();
-
-            // Collect stats
-            const byDomain: Record<string, number> = {};
-            for (const route of this.routeRegistry.getAll()) {
-                const domain = route.route.split('://')[0];
-                byDomain[domain] = (byDomain[domain] || 0) + 1;
-            }
-
-            return {
-                success: true,
-                routesRebuilt: this.routeRegistry.getAll().length,
-                byDomain,
-            };
-        } catch (error) {
-            return {
-                success: false,
-                routesRebuilt: 0,
-                byDomain: {},
-                error: error.message,
-            };
-        }
-    }
-
-    /**
-     * Get all sources (for health checks)
-     */
-    public getAllSources(): {
-        sourceId: string;
-        domain: string;
-        sourceName: string;
-        isLocal: boolean;
-        cacheTtlMs: number;
-    }[] {
-        const result: {
-            sourceId: string;
-            domain: string;
-            sourceName: string;
-            isLocal: boolean;
-            cacheTtlMs: number;
-        }[] = [];
-
-        for (const domain of this.domainRegistry.getAll()) {
-            if (!domain.extractors) continue;
-
-            for (const extractor of domain.extractors) {
-                const sourceId = generateSourceId(extractor.source.name, extractor.basePath || '');
-                const isLocal = extractor.source.name.startsWith('local:');
-
-                result.push({
-                    sourceId,
-                    domain: domain.name,
-                    sourceName: extractor.source.name,
-                    isLocal,
-                    cacheTtlMs: extractor.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS,
-                });
-            }
-        }
-
-        return result;
-    }
-
     // ============================================================
     // PRIVATE: SOURCE INITIALIZATION
     // ============================================================
@@ -382,7 +325,10 @@ export class Ernesto {
      * - If fresh: load from index (fast, preserves indexed_at)
      * - If stale: fetch from origin, index (new indexed_at)
      */
-    private async initializeSource(domainName: string, extractor: PipelineConfig): Promise<{ fromIndex: boolean; resourceCount: number }> {
+    private async initializeSource(
+        domainName: string,
+        extractor: PipelineConfig
+    ): Promise<{ fromIndex: boolean; resourceCount: number }> {
         const pipeline = new ContentPipeline({
             source: extractor.source,
             formats: extractor.formats,
@@ -426,7 +372,7 @@ export class Ernesto {
     private async loadSourceFromIndex(
         sourceId: string,
         domainName: string,
-        ttlMs: number,
+        ttlMs: number
     ): Promise<{ fromIndex: boolean; resourceCount: number }> {
         const docs = await exportSourceDocuments(this, sourceId);
 
@@ -435,11 +381,7 @@ export class Ernesto {
             return { fromIndex: true, resourceCount: 0 };
         }
 
-        // Count resources (for stats only - content is in Typesense)
-        const resourceCount = docs.filter((doc) => doc.type === 'resource' || doc.type === 'instruction').length;
-
-        // Store in cache (for health checks - content served from Typesense)
-        this.globalKnowledgeCache.setSource(sourceId, domainName, resourceCount, ttlMs);
+        const resourceCount = docs.length;
 
         log('Loaded source from index', {
             sourceId,
@@ -455,7 +397,10 @@ export class Ernesto {
      *
      * Used for stale/missing sources - fetches fresh data and updates index.
      */
-    private async fetchAndIndexSource(domainName: string, extractor: PipelineConfig): Promise<{ resourceCount: number }> {
+    private async fetchAndIndexSource(
+        domainName: string,
+        extractor: PipelineConfig
+    ): Promise<{ resourceCount: number }> {
         const pipeline = new ContentPipeline({
             source: extractor.source,
             formats: extractor.formats,
@@ -472,16 +417,9 @@ export class Ernesto {
             return { resourceCount: 0 };
         }
 
-        // Build content
-        const contentMap = new Map<string, string>();
-        this.prebuildAllContent(resources, contentMap);
-
-        // Store in cache (for health checks - content served from Typesense)
-        this.globalKnowledgeCache.setSource(sourceId, domainName, resources.length, ttlMs);
-
         // Delete old documents and index new ones
         await deleteSourceDocuments(this, sourceId);
-        await this.indexSource(sourceId, domainName, resources, contentMap);
+        await this.indexSource(sourceId, domainName, extractor, resources);
 
         log('Fetched and indexed source', {
             sourceId,
@@ -494,21 +432,43 @@ export class Ernesto {
 
     /**
      * Index a source's routes to Typesense
+     *
+     * Merges domain-level and pipeline-level scopes for access control.
      */
     private async indexSource(
         sourceId: string,
         domainName: string,
-        resources: ResourceNode[],
-        contentMap: Map<string, string>,
+        pipelineConfig: PipelineConfig,
+        resources: ResourceNode[]
     ): Promise<void> {
+        // Get domain and merge scopes
+        const domain = this.domainRegistry.get(domainName);
+        const domainScopes = domain?.requiredScopes || [];
+        const pipelineScopes = pipelineConfig.scopes || [];
+
+        // Merge domain + pipeline scopes (following same pattern as routes)
+        const mergedScopes = [...new Set([...domainScopes, ...pipelineScopes])];
+
         // Flatten resources (handle nested children)
         const flatResources = this.flattenResources(resources);
 
         // Build documents for this source
-        const documents: McpResourceDocument[] = flatResources.map((resource) => {
-            const path = resource.path.startsWith('/') ? resource.path.slice(1) : resource.path;
-            const uri = `${domainName}://${path}`;
-            const content = contentMap.get(resource.path) || resource.metadata?.description || '';
+        const documents: McpResourceDocument[] = flatResources.map(resource => {
+            const path = resource.path.startsWith('/')
+                ? resource.path.slice(1)
+                : resource.path;
+            const uri = `${domainName}://resources/${path}`;
+
+            // Description from ResourceNode or truncate content
+            const description = resource.description
+                ? this.truncateDescription(resource.description)
+                : this.truncateDescription(resource.content);
+
+            // Scopes: empty array = unrestricted (visible to all)
+            // Non-empty array = restricted (user must have ALL scopes)
+            // Use merged scopes unless resource explicitly overrides
+            const resourceScopes = resource.metadata?.scopes;
+            const finalScopes = resourceScopes !== undefined ? resourceScopes : mergedScopes;
 
             return {
                 id: Buffer.from(uri).toString('base64'),
@@ -517,20 +477,49 @@ export class Ernesto {
                 path,
                 source_id: sourceId,
                 name: resource.name,
-                content,
-                scopes: ['public'],
-                description: resource.metadata?.description || '',
-                content_size: content.length,
+                content: resource.content,
+                scopes: finalScopes,
+                is_unrestricted: finalScopes.length === 0,
+                description,
+                content_size: resource.content.length,
                 child_count: resource.children?.length || 0,
-                type: 'resource',
-                resource_type: 'resource',
+                resource_type: resource.metadata?.resource_type || 'resource',
                 path_segment: path.split('/')[0] || '',
-                quality_score: 50,
+                quality_score: resource.metadata?.quality_score ?? 50,
                 indexed_at: Date.now(),
             };
         });
 
         await indexMcpResources(this, documents);
+    }
+
+    /**
+     * Truncate description to reasonable length for MCP search results
+     *
+     * Limits description to ~200 characters to avoid bloating MCP responses.
+     * Full content is always available in the content field.
+     */
+    private truncateDescription(description: string, maxLength = 200): string {
+        if (!description || description.length <= maxLength) {
+            return description;
+        }
+
+        // Find the last sentence boundary before maxLength
+        const truncated = description.slice(0, maxLength);
+        const lastSentence = truncated.match(/^.*[.!?]/);
+
+        if (lastSentence && lastSentence[0].length > 50) {
+            // Use last complete sentence if it's substantial
+            return lastSentence[0].trim();
+        }
+
+        // Otherwise, truncate at word boundary
+        const lastSpace = truncated.lastIndexOf(' ');
+        if (lastSpace > 50) {
+            return truncated.slice(0, lastSpace).trim() + '...';
+        }
+
+        return truncated.trim() + '...';
     }
 
     /**
@@ -547,58 +536,6 @@ export class Ernesto {
         return result;
     }
 
-    /**
-     * Index static routes (instructions, templates) to Typesense
-     *
-     * These are TypeScript-defined routes that need to be searchable.
-     * Only indexes metadata - execution still happens via RouteRegistry.
-     */
-    private async indexStaticRoutes(): Promise<void> {
-        const staticRoutes = this.routeRegistry.getAll().filter((r) => r.type === 'instruction' || r.type === 'template');
-
-        if (staticRoutes.length === 0) return;
-
-        const documents: McpResourceDocument[] = staticRoutes.map((route) => {
-            const [domain, ...pathParts] = route.route.split('://');
-            const path = pathParts.join('://') || domain;
-
-            // Build searchable content from description + inline content
-            const contentParts = [route.description];
-            if (route.content && typeof route.content === 'string') {
-                contentParts.push(route.content);
-            }
-
-            return {
-                id: Buffer.from(route.route).toString('base64'),
-                uri: route.route,
-                domain,
-                path,
-                source_id: `${domain}__static`,
-                name: route.name || path.split('/').pop() || path,
-                content: contentParts.join('\n\n'),
-                scopes: route.requiredScopes || ['public'],
-                description: route.description || '',
-                content_size: contentParts.join('\n\n').length,
-                child_count: 0,
-                type: route.type,
-                resource_type: route.type,
-                path_segment: path.split('/')[0] || '',
-                quality_score: 80, // Static routes are high quality
-                indexed_at: Date.now(),
-            };
-        });
-
-        await indexMcpResources(this, documents);
-
-        log('Indexed static routes', {
-            count: documents.length,
-            types: {
-                instructions: staticRoutes.filter((r) => r.type === 'instruction').length,
-                templates: staticRoutes.filter((r) => r.type === 'template').length,
-            },
-        });
-    }
-
     // ============================================================
     // PRIVATE: HELPERS
     // ============================================================
@@ -611,17 +548,22 @@ export class Ernesto {
     private registerStaticRoutes(): void {
         for (const domain of this.domainRegistry.getAll()) {
             // Apply domain-level scopes to routes
-            const routesWithDomainScopes = domain.routes.map((route) => {
+            const routesWithDomainScopes = domain.routes.map(route => {
                 if (!domain.requiredScopes || domain.requiredScopes.length === 0) {
                     return route;
                 }
 
                 // Merge domain scopes with route scopes (domain scopes take precedence)
-                const mergedScopes = [...new Set([...(domain.requiredScopes || []), ...(route.requiredScopes || [])])];
+                const mergedScopes = [
+                    ...new Set([
+                        ...(domain.requiredScopes || []),
+                        ...(route.requiredScopes || [])
+                    ])
+                ];
 
                 return {
                     ...route,
-                    requiredScopes: mergedScopes,
+                    requiredScopes: mergedScopes
                 };
             });
 
@@ -630,62 +572,24 @@ export class Ernesto {
     }
 
     /**
-     * Initialize instructions cache
+     * Initialize searchable routes cache
      *
-     * Executes each domain's instructions route to warm up the cache.
-     * Instructions are quasi-static, so this is done once at startup.
+     * Counts searchable routes with static freshness for stats.
      */
     private async initializeInstructionsCache(): Promise<void> {
-        log('Initializing instructions cache...');
+        log('Initializing searchable routes cache...');
 
         let loaded = 0;
-        let skipped = 0;
 
         for (const domain of this.domainRegistry.getAll()) {
-            try {
-                // Find the instructions route for this domain
-                const instructionsRoute = domain.routes.find(
-                    (route) => route.type === 'instruction' && route.route.endsWith('://instructions'),
-                );
-
-                if (!instructionsRoute) {
-                    skipped++;
-                    continue;
-                }
-
-                // Execute to warm up cache
-                await instructionsRoute.execute(undefined, {
-                    timestamp: Date.now(),
-                    ernesto: this,
-                });
-
-                loaded++;
-            } catch (error) {
-                log('Failed to load instructions', {
-                    domain: domain.name,
-                    error,
-                });
-                skipped++;
-            }
+            // Count searchable routes with static freshness
+            const staticRoutes = domain.routes.filter(
+                route => route.searchable && route.freshness === 'static'
+            );
+            loaded += staticRoutes.length;
         }
 
-        log('Instructions cache initialized', { loaded, skipped });
-    }
-
-    /**
-     * Pre-build content for all resource nodes
-     */
-    private prebuildAllContent(nodes: ResourceNode[], contentMap: Map<string, string>): void {
-        for (const node of nodes) {
-            const content = buildContent(node);
-            if (content) {
-                contentMap.set(node.path, content);
-            }
-
-            if (node.children) {
-                this.prebuildAllContent(node.children, contentMap);
-            }
-        }
+        log('Searchable routes cache initialized', { loaded });
     }
 
     /**
@@ -699,7 +603,10 @@ export class Ernesto {
             if (!domain.extractors) continue;
 
             for (const extractor of domain.extractors) {
-                const id = generateSourceId(extractor.source.name, extractor.basePath || '');
+                const id = generateSourceId(
+                    extractor.source.name,
+                    extractor.basePath || ''
+                );
                 if (id === sourceId) {
                     return { domain: domain.name, extractor };
                 }
