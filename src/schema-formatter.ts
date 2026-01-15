@@ -169,7 +169,9 @@ function getFieldType(schema: z.ZodSchema): string {
         if (Array.isArray(values)) {
             return `enum: ${values.map((v: any) => `"${v}"`).join(' | ')}`;
         } else if (values && typeof values === 'object') {
-            return `enum: ${Object.values(values).map((v: any) => `"${v}"`).join(' | ')}`;
+            return `enum: ${Object.values(values)
+                .map((v: any) => `"${v}"`)
+                .join(' | ')}`;
         }
 
         return 'enum';

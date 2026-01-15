@@ -1,10 +1,5 @@
 /**
  * Content Pipeline Type Definitions
- *
- * Two-Layer Adapter Architecture:
- * - Source: WHERE content comes from (APIs, filesystem, databases)
- * - Format: HOW to parse content (Markdown, CSV, JSON, etc.)
- * - Pipeline: Composes source + formats to produce resources
  */
 
 /**

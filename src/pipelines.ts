@@ -1,24 +1,11 @@
 /**
- * Content Pipeline - Composition of Source + Formats
- *
- * Example usage:
- * ```typescript
- * // Local markdown files
- * const pipeline = new ContentPipeline({
- *   source: new LocalSource('/docs/legal'),
- *   formats: [new MarkdownFormat()],
- *   basePath: '/legal'
- * });
- *
- * // Fetch resources
- * const resources = await pipeline.fetchResources();
- * ```
+ * Content Extraction Pipeline - Composition of Source + Formats
  */
 
 import { ContentSource, ContentFormat, PipelineConfig, RawDocument, DEFAULT_CACHE_TTL_MS, ResourceNode } from './types';
 import debug from 'debug';
 
-const log = debug('ernesto:pipelines');
+const log = debug('pipelines');
 
 /**
  * Generate a deterministic source ID from pipeline configuration
@@ -103,22 +90,19 @@ export class ContentPipeline {
      * Process a single document through the format pipeline
      */
     private async processDocument(doc: RawDocument): Promise<ResourceNode[]> {
-        // Step 1: Find format that can handle this content type
         const format = this.findFormat(doc.contentType);
 
         if (!format) {
             log('No format handler found', {
                 docId: doc.id,
                 contentType: doc.contentType,
-                availableFormats: this.formats.map(f => f.name),
+                availableFormats: this.formats.map((f) => f.name),
             });
             return [];
         }
 
-        // Step 2: Fetch raw content
         const content = await this.source.fetchContent(doc.id);
 
-        // Step 3: Parse content with format adapter
         const docBasePath = this.buildDocumentPath(doc);
         const resources = await format.parse(content, docBasePath);
 
@@ -183,11 +167,11 @@ export class ContentPipeline {
         formats: string[];
         basePath: string;
         cacheTtlMs: number;
-        } {
+    } {
         return {
             source: this.source.name,
             sourceId: this.sourceId,
-            formats: this.formats.map(f => f.name),
+            formats: this.formats.map((f) => f.name),
             basePath: this.basePath,
             cacheTtlMs: this.cacheTtlMs,
         };

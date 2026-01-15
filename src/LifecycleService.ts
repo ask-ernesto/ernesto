@@ -1,33 +1,14 @@
 /**
  * Lifecycle Service
- *
- * Handles operational lifecycle tasks for Ernesto:
- * - restart: clear state and re-initialize
- * - wipe and rebuild: clear Typesense index and rebuild from sources
- * - refresh source: manually refresh a single source
- *
- * Separated from core Ernesto to keep the lib minimal.
+ * Handles operational lifecycle tasks
  */
 
 import debug from 'debug';
-import {
-    clearAllResources,
-    deleteSourceDocuments,
-    getSourceFreshness,
-} from './typesense/client';
-import { generateSourceId } from './pipelines';
-import { DEFAULT_CACHE_TTL_MS } from './types';
+import { clearAllResources, deleteSourceDocuments, getSourceFreshness } from './typesense/client';
+import { ContentPipeline } from './pipelines';
 import type { Ernesto } from './Ernesto';
 
-const log = debug('ernesto:lifecycle');
-
-export interface SourceInfo {
-    sourceId: string;
-    domain: string;
-    sourceName: string;
-    isLocal: boolean;
-    cacheTtlMs: number;
-}
+const log = debug('LifecycleService');
 
 export class LifecycleService {
     private ernesto: Ernesto;
@@ -51,15 +32,8 @@ export class LifecycleService {
         log('Restarting...');
 
         try {
-            // Clear in-memory state
-            this.ernesto.clearState();
-
-            // Re-register static routes
-            for (const domain of this.ernesto.domainRegistry.getAll()) {
-                this.ernesto.routeRegistry.registerAll(domain.routes);
-            }
-
-            // Re-initialize (same flow as cold start)
+            // Clear in-memory state and re-initialize
+            this.ernesto.routeRegistry.clear();
             await this.ernesto.initialize();
 
             const duration = Date.now() - startTime;
@@ -93,16 +67,9 @@ export class LifecycleService {
         log('Wiping index and rebuilding...');
 
         try {
-            // Clear Typesense index
+            // Clear Typesense index and in-memory state
             await clearAllResources(this.ernesto as any);
-
-            // Clear in-memory state
-            this.ernesto.clearState();
-
-            // Re-register static routes
-            for (const domain of this.ernesto.domainRegistry.getAll()) {
-                this.ernesto.routeRegistry.registerAll(domain.routes);
-            }
+            this.ernesto.routeRegistry.clear();
 
             // Initialize (everything is stale, so everything fetches)
             await this.ernesto.initialize();
@@ -174,8 +141,7 @@ export class LifecycleService {
         resourceCount: number;
         message: string;
     }> {
-        // Find the source
-        const sourceInfo = this.findSource(sourceId);
+        const sourceInfo = this.ernesto.domainRegistry.findSource(sourceId);
         if (!sourceInfo) {
             return {
                 success: false,
@@ -187,19 +153,27 @@ export class LifecycleService {
         const { domainName, extractor } = sourceInfo;
 
         try {
-            // Delete old documents
-            await deleteSourceDocuments(this.ernesto as any, sourceId);
+            const pipeline = new ContentPipeline({
+                source: extractor.source,
+                formats: extractor.formats,
+                basePath: extractor.basePath,
+            });
 
-            // Fetch fresh using Ernesto's internal method
-            const result = await this.ernesto.refetchSource(domainName, extractor);
+            const resources = await pipeline.fetchResources();
+            if (resources.length === 0) {
+                return { success: true, resourceCount: 0, message: 'No resources found' };
+            }
+
+            await deleteSourceDocuments(this.ernesto as any, sourceId);
+            await this.ernesto.indexResources(sourceId, domainName, extractor, resources);
 
             return {
                 success: true,
-                resourceCount: result.resourceCount,
-                message: `Refreshed ${result.resourceCount} resources`,
+                resourceCount: resources.length,
+                message: `Refreshed ${resources.length} resources`,
             };
         } catch (error: any) {
-            log('Manual refresh failed', { sourceId, error });
+            log('Refresh failed', { sourceId, error });
             return {
                 success: false,
                 resourceCount: 0,
@@ -221,7 +195,7 @@ export class LifecycleService {
     }> {
         const stats = { checked: 0, refreshed: 0, failed: 0 };
 
-        for (const source of this.getAllSources()) {
+        for (const source of this.ernesto.domainRegistry.getAllSources()) {
             // Skip local sources (always fresh, re-fetched on restart)
             if (source.isLocal) continue;
 
@@ -253,58 +227,5 @@ export class LifecycleService {
         }
 
         return stats;
-    }
-
-    /**
-     * Get all sources (for health checks and auto-refresh)
-     */
-    getAllSources(): SourceInfo[] {
-        const result: SourceInfo[] = [];
-
-        for (const domain of this.ernesto.domainRegistry.getAll()) {
-            if (!domain.extractors) continue;
-
-            for (const extractor of domain.extractors) {
-                const sourceId = generateSourceId(
-                    extractor.source.name,
-                    extractor.basePath || ''
-                );
-                const isLocal = extractor.source.name.startsWith('local:');
-
-                result.push({
-                    sourceId,
-                    domain: domain.name,
-                    sourceName: extractor.source.name,
-                    isLocal,
-                    cacheTtlMs: extractor.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS,
-                });
-            }
-        }
-
-        return result;
-    }
-
-    /**
-     * Find a source by ID
-     */
-    private findSource(sourceId: string): {
-        domainName: string;
-        extractor: any;
-    } | null {
-        for (const domain of this.ernesto.domainRegistry.getAll()) {
-            if (!domain.extractors) continue;
-
-            for (const extractor of domain.extractors) {
-                const id = generateSourceId(
-                    extractor.source.name,
-                    extractor.basePath || ''
-                );
-                if (id === sourceId) {
-                    return { domainName: domain.name, extractor };
-                }
-            }
-        }
-
-        return null;
     }
 }

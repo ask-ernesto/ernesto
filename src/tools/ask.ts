@@ -12,35 +12,24 @@
 
 import { z } from 'zod';
 import { RouteContext } from '../route';
-import { searchResources } from '../typesense/search';
 import { formatZodSchemaForAgent } from '../schema-formatter';
+import { searchResources } from '../typesense/search';
 import debug from 'debug';
 
-const log = debug('ernesto:tools:search');
+const log = debug('ask');
 
 const inputSchema = z.object({
     query: z.string().min(1).describe('Natural language search query'),
-    domain: z.string().optional()
-        .describe('Filter to specific domain'),
-    perDomain: z.number().min(1).max(50).default(10).optional()
-        .describe('Maximum results per domain (default: 10)')
+    domain: z.string().optional().describe('Filter to specific domain'),
+    perDomain: z.number().min(1).max(50).default(10).optional().describe('Maximum results per domain (default: 10)'),
 });
 
-export interface AskTool {
-    name: 'ask';
-    description: string;
-    inputSchema: typeof inputSchema;
-    handler: (params: z.infer<typeof inputSchema>) => Promise<{
-        content: { type: 'text'; text: string }[];
-    }>;
-}
-
-export function createSearchTool(context: RouteContext, description: string): AskTool {
+export function createAskTool(context: RouteContext, description: string) {
     return {
         name: 'ask',
         description,
         inputSchema,
-        handler: async ({ query, domain, perDomain = 10 }) => {
+        handler: async ({ query, domain, perDomain = 10 }: any, _extra: any) => {
             log('ask called', {
                 query,
                 domain,
@@ -54,9 +43,9 @@ export function createSearchTool(context: RouteContext, description: string): As
             log('ask complete', { query });
 
             return {
-                content: [{ type: 'text' as const, text: result }]
+                content: [{ type: 'text' as const, text: result }],
             };
-        }
+        },
     };
 }
 
@@ -74,9 +63,7 @@ async function executeSearch(ctx: RouteContext, params: SearchParams): Promise<s
 
     // Get domains to search
     const allDomains = ctx.ernesto.domainRegistry.getAll();
-    const domainsToSearch = domain
-        ? allDomains.filter(d => d.name === domain)
-        : allDomains;
+    const domainsToSearch = domain ? allDomains.filter((d) => d.name === domain) : allDomains;
 
     // Build response structure
     const response: Record<string, any> = {};
@@ -87,29 +74,25 @@ async function executeSearch(ctx: RouteContext, params: SearchParams): Promise<s
         const searchConfig = domainConfig.searchConfig || {};
 
         // === PART 1: Get searchable routes from RouteRegistry (always surfaced) ===
-        const routeResults = getSearchableRoutes(ctx, domainName);
+        const routeResults = getSearchableRoutes(ctx, domainName).map((r) => ({ ...r, type: 'route' as const }));
 
         // === PART 2: Get resources from Typesense (semantic search) ===
-        const resourceResults = await searchResources(ctx.ernesto, {
-            query,
-            domain: domainName,
-            segments: searchConfig.segments,
-            queryBy: searchConfig.queryBy,
-            weights: searchConfig.weights,
-            scopes: ctx.scopes
-        });
+        const resourceResults = (
+            await searchResources(ctx.ernesto, {
+                query,
+                domain: domainName,
+                segments: searchConfig.segments,
+                queryBy: searchConfig.queryBy,
+                weights: searchConfig.weights,
+                scopes: ctx.scopes,
+            })
+        ).map((r) => ({ route: r.uri, description: r.description, type: 'resource' as const, segment: r.segment }));
 
-        // === COMBINE: Routes first, then resources ===
-        const allResults = [
-            ...routeResults.map(r => ({ ...r, type: 'route' as const })),
-            ...resourceResults.map(r => ({ route: r.uri, description: r.description, type: 'resource' as const, segment: r.segment }))
-        ];
+        // === COMBINE: All routes first, then limited resources ===
+        const limitedResults = [...routeResults, ...resourceResults.slice(0, perDomain)];
 
         // Only include domain if it has matching results
-        if (allResults.length === 0) continue;
-
-        // Apply per-domain limit
-        const limitedResults = allResults.slice(0, perDomain);
+        if (limitedResults.length === 0) continue;
 
         // Build domain response
         response[domainName] = {
@@ -117,15 +100,15 @@ async function executeSearch(ctx: RouteContext, params: SearchParams): Promise<s
             routes: {
                 list: limitedResults,
                 count: limitedResults.length,
-                ...(allResults.length > limitedResults.length && {
-                    more_available: allResults.length - limitedResults.length
-                })
-            }
+                ...(routeResults.length + resourceResults.length > limitedResults.length && {
+                    more_available: routeResults.length + resourceResults.length - limitedResults.length,
+                }),
+            },
         };
     }
 
     const matchingDomains = Object.keys(response).length;
-    log('Ask complete', { query, matchingDomains });
+    log('Complete', { query, matchingDomains });
 
     return formatSearchResponse(response);
 }
@@ -133,30 +116,29 @@ async function executeSearch(ctx: RouteContext, params: SearchParams): Promise<s
 /**
  * Get all searchable routes for a domain from RouteRegistry
  */
-function getSearchableRoutes(ctx: RouteContext, domainName: string): Array<{
+function getSearchableRoutes(
+    ctx: RouteContext,
+    domainName: string,
+): {
     route: string;
     description: string;
     permissions?: string[];
     parameters?: string;
-}> {
+}[] {
     const allRoutes = ctx.ernesto.routeRegistry.getAll();
-    const domainSearchableRoutes = allRoutes.filter(r =>
-        r.route.startsWith(`${domainName}://`) && r.searchable
-    );
+    const domainSearchableRoutes = allRoutes.filter((r) => r.route.startsWith(`${domainName}://`) && r.searchable);
 
-    const results: Array<{
+    const results: {
         route: string;
         description: string;
         permissions?: string[];
         parameters?: string;
-    }> = [];
+    }[] = [];
 
     for (const route of domainSearchableRoutes) {
         // Check permissions
         if (route.requiredScopes && route.requiredScopes.length > 0) {
-            const hasPermission = route.requiredScopes.every(p =>
-                ctx.scopes?.includes(p)
-            );
+            const hasPermission = route.requiredScopes.every((p) => ctx.scopes?.includes(p));
             if (!hasPermission) continue;
         }
 

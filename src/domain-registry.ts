@@ -6,6 +6,8 @@
  */
 
 import { Domain } from './domain';
+import { generateSourceId } from './pipelines';
+import { DEFAULT_CACHE_TTL_MS, PipelineConfig } from './types';
 import debug from 'debug';
 
 const log = debug('ernesto:domain-registry');
@@ -57,4 +59,56 @@ export class DomainRegistry {
     has(name: string): boolean {
         return this.domains.has(name);
     }
+
+    /**
+     * Get all sources across all domains
+     */
+    getAllSources(): SourceInfo[] {
+        const result: SourceInfo[] = [];
+
+        for (const domain of this.domains.values()) {
+            if (!domain.extractors) continue;
+
+            for (const extractor of domain.extractors) {
+                const sourceId = generateSourceId(extractor.source.name, extractor.basePath || '');
+                const isLocal = extractor.source.name.startsWith('local:');
+
+                result.push({
+                    sourceId,
+                    domain: domain.name,
+                    sourceName: extractor.source.name,
+                    isLocal,
+                    cacheTtlMs: extractor.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS,
+                });
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Find a source by ID
+     */
+    findSource(sourceId: string): { domainName: string; extractor: PipelineConfig } | null {
+        for (const domain of this.domains.values()) {
+            if (!domain.extractors) continue;
+
+            for (const extractor of domain.extractors) {
+                const id = generateSourceId(extractor.source.name, extractor.basePath || '');
+                if (id === sourceId) {
+                    return { domainName: domain.name, extractor };
+                }
+            }
+        }
+
+        return null;
+    }
+}
+
+export interface SourceInfo {
+    sourceId: string;
+    domain: string;
+    sourceName: string;
+    isLocal: boolean;
+    cacheTtlMs: number;
 }

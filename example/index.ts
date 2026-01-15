@@ -3,10 +3,15 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { Client } from 'typesense';
 import { Ernesto } from '../src/Ernesto';
+import { InstructionRegistry } from 'instructions/registry';
 
 const ernesto = new Ernesto({
     domains: [],
-    routes: [],
+    instructionRegistry: new InstructionRegistry({
+        instructions: (context) => `You are an assistant that can help with tasks.`,
+        askTool: (context) => `You can ask me questions.`,
+        getTool: (context) => `You can get me information.`,
+    }),
     typesense: new Client({
         nodes: [
             {

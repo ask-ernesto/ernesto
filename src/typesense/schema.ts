@@ -1,13 +1,11 @@
 /**
  * Typesense Schema for MCP Resources
  *
- * This collection enables semantic search across all MCP resources.
- * Instead of dumping the entire resource tree into tool descriptions,
- * we index resources and let agents discover them semantically.
  */
 
 import { CollectionCreateSchema } from 'typesense/lib/Typesense/Collections';
 
+// TODO: Configurable
 export const MCP_RESOURCES_COLLECTION = 'mcp_resources';
 
 export const mcpResourcesSchema: CollectionCreateSchema = {
@@ -35,11 +33,10 @@ export const mcpResourcesSchema: CollectionCreateSchema = {
         { name: 'content_size', type: 'int32', facet: false, index: true },
         { name: 'child_count', type: 'int32', facet: false, index: true },
         { name: 'resource_type', type: 'string', facet: true, index: true }, // Semantic type: column, table, page, doc, etc.
-        { name: 'path_segment', type: 'string', facet: true, index: true }, // First path segment for filtering (aggregates, facts, dimensions, etc.)
+        { name: 'path_segment', type: 'string', facet: true, index: true }, // First path segment for filtering at the domain level.
 
         // === Quality Score (pre-computed ranking) ===
-        // Combines structure and type signals into a single 0-100 score
-        // Higher = better quality (better structured, more valuable type)
+        // TODO: Remove?
         { name: 'quality_score', type: 'int32', facet: false, index: true },
 
         // === Timestamps ===
@@ -52,21 +49,21 @@ export const mcpResourcesSchema: CollectionCreateSchema = {
  * Document structure for indexing
  */
 export interface McpResourceDocument {
-    id: string; // Stable ID for upsert (typically same as uri)
+    id: string;
     uri: string;
     domain: string;
     path: string;
-    source_id: string; // Identifies which extractor/source produced this document
+    source_id: string;
     scopes?: string[];
-    is_unrestricted: boolean; // Computed: true if scopes is empty/undefined
+    is_unrestricted: boolean;
     name: string;
     content: string;
     description: string;
     content_size: number;
     child_count: number;
-    resource_type: string; // Semantic type: column, table, page, doc, etc.
-    path_segment: string; // First path segment for filtering (aggregates, facts, dimensions, etc.)
-    quality_score: number; // Pre-computed 0-100 quality score
+    resource_type: string;
+    path_segment: string;
+    quality_score: number;
     indexed_at: number;
 }
 

@@ -41,10 +41,7 @@ export type RouteLookup = (route: string) => RouteInfo | undefined;
  * @param routeLookup - Function to look up route info (schema, description)
  * @returns Markdown string with "What's Next" section
  */
-export function buildGuidanceSection(
-    guidance: RouteGuidance[],
-    routeLookup: RouteLookup
-): string {
+export function buildGuidanceSection(guidance: RouteGuidance[], routeLookup: RouteLookup): string {
     if (guidance.length === 0) return '';
 
     const parts: string[] = [];

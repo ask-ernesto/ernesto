@@ -7,10 +7,10 @@
 
 import { SearchSegment } from '../route';
 import { searchMcpResources } from './client';
-import { Ernesto } from '../Ernesto';
+import type { Ernesto } from '../Ernesto';
 import debug from 'debug';
 
-const log = debug('ernesto:typesense:search');
+const log = debug('search');
 
 /**
  * Default search segment for resources
@@ -21,8 +21,8 @@ const DEFAULT_SEGMENTS: SearchSegment[] = [
         filter: '',
         limit: 20,
         description: 'Resources extracted from sources',
-        priority: 1
-    }
+        priority: 1,
+    },
 ];
 
 export interface ResourceSearchResult {
@@ -35,7 +35,7 @@ export interface ResourceSearchOptions {
     query: string;
     domain: string;
     segments?: SearchSegment[];
-    queryBy?: string;  // Comma-separated field names
+    queryBy?: string; // Comma-separated field names
     weights?: string;
     scopes?: string[];
 }
@@ -46,15 +46,10 @@ export interface ResourceSearchOptions {
  * This is the pure Typesense search - no route composition.
  * Returns matching resources ranked by relevance.
  */
-export async function searchResources(
-    ernesto: Ernesto,
-    options: ResourceSearchOptions
-): Promise<ResourceSearchResult[]> {
+export async function searchResources(ernesto: Ernesto, options: ResourceSearchOptions): Promise<ResourceSearchResult[]> {
     const { query, domain, segments, queryBy, weights, scopes } = options;
 
-    const activeSegments = segments && segments.length > 0
-        ? segments
-        : DEFAULT_SEGMENTS;
+    const activeSegments = segments && segments.length > 0 ? segments : DEFAULT_SEGMENTS;
 
     const results: ResourceSearchResult[] = [];
     const sortedSegments = [...activeSegments].sort((a, b) => a.priority - b.priority);
@@ -68,7 +63,7 @@ export async function searchResources(
                 filterBy: segment.filter || undefined,
                 queryBy,
                 weights,
-                scopes
+                scopes,
             });
 
             for (const result of segmentResults) {
@@ -82,7 +77,7 @@ export async function searchResources(
             log('Segment search failed', {
                 domain,
                 segment: segment.name,
-                error: error.message
+                error: error.message,
             });
         }
     }

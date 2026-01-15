@@ -1,21 +1,15 @@
 /**
- * TOON Output Formatter
- *
- * TOON (Token-Oriented Object Notation) reduces token usage by 30-40%
- * for tabular data compared to JSON. Ideal for database query results,
- * API responses with arrays of objects.
+ * Basic Output formatters to be registered at the tool level.
  */
 
 import { encode as encodeToon } from '@toon-format/toon';
 import debug from 'debug';
 
-const log = debug('ernesto:formatters');
+const log = debug('formatters');
 
 /**
  * Format output using TOON (Token-Oriented Object Notation)
- *
- * TOON reduces token usage by 30-40% for tabular data compared to JSON.
- * Ideal for database query results, API responses with arrays of objects.
+ * In some cases this can reduce token output
  *
  * @param output - Raw output (typically { rows: [...] } or similar structure)
  * @returns TOON-formatted string

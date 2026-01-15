@@ -1,8 +1,6 @@
 /**
  * Ernesto Router
- *
  * Routes execute() calls to appropriate routes based on URI.
- * One pattern: every route has execute() returning GuidedContent.
  */
 
 import { Route, RouteContext, RouteResult } from './route';
@@ -11,7 +9,7 @@ import { getDocumentByUri } from './typesense/client';
 import { formatZodSchemaForAgent } from './schema-formatter';
 import { buildGuidanceSection, RouteInfo } from './guidance';
 
-const log = debug('ernesto:router');
+const log = debug('router');
 
 const MAX_CALL_DEPTH = 10;
 
@@ -37,7 +35,7 @@ function summarizeValidationErrors(errors: any[]): any {
             summary: `Validation failed for ${errorsByPath.size} fields across ${errors.length} errors`,
             error_counts: Object.fromEntries(pathCounts),
             sample_errors: errors.slice(0, 3),
-            hint: 'Check route output matches schema. Full errors logged server-side.'
+            hint: 'Check route output matches schema. Full errors logged server-side.',
         };
     }
 
@@ -66,7 +64,7 @@ export class RouteRegistry {
         log('Batch registered', {
             total: routes.length,
             added,
-            replaced
+            replaced,
         });
     }
 
@@ -85,14 +83,15 @@ export class RouteRegistry {
     }
 
     getVisible(ctx: RouteContext): Route[] {
-        const userPermissions = ctx.scopes || [];
+        return this.getAll().filter((route) => this.hasPermission(route, ctx.scopes));
+    }
 
-        return this.getAll().filter(route => {
-            if (!route.requiredScopes || route.requiredScopes.length === 0) {
-                return true;
-            }
-            return route.requiredScopes.every(p => userPermissions.includes(p));
-        });
+    hasPermission(route: Route, scopes?: string[]): boolean {
+        if (!route.requiredScopes || route.requiredScopes.length === 0) {
+            return true;
+        }
+        const userScopes = scopes || [];
+        return route.requiredScopes.every((s) => userScopes.includes(s));
     }
 }
 
@@ -134,14 +133,6 @@ async function fetchFromTypesense(route: string, ctx: RouteContext): Promise<Rou
     }
 }
 
-function hasPermissions(route: Route, scopes?: string[]): boolean {
-    if (!route.requiredScopes || route.requiredScopes.length === 0) {
-        return true;
-    }
-    const userPermissions = scopes || [];
-    return route.requiredScopes.every(p => userPermissions.includes(p));
-}
-
 function createRouteLookup(ctx: RouteContext): (route: string) => RouteInfo | undefined {
     return (uri: string) => {
         const routeDef = ctx.ernesto.routeRegistry.get(uri);
@@ -149,7 +140,7 @@ function createRouteLookup(ctx: RouteContext): (route: string) => RouteInfo | un
             return undefined;
         }
 
-        if (!hasPermissions(routeDef, ctx.scopes)) {
+        if (!ctx.ernesto.routeRegistry.hasPermission(routeDef, ctx.scopes)) {
             return undefined;
         }
 
@@ -167,11 +158,7 @@ function createRouteLookup(ctx: RouteContext): (route: string) => RouteInfo | un
 /**
  * Execute a route
  */
-export async function routeExecution(
-    route: string,
-    params: unknown,
-    ctx: RouteContext
-): Promise<RouteResult> {
+export async function routeExecution(route: string, params: unknown, ctx: RouteContext): Promise<RouteResult> {
     try {
         const callStack = ctx.callStack || [];
 
@@ -200,7 +187,7 @@ export async function routeExecution(
         }
 
         // Permission check
-        if (!hasPermissions(routeDef, ctx.scopes)) {
+        if (!ctx.ernesto.routeRegistry.hasPermission(routeDef, ctx.scopes)) {
             return {
                 success: false,
                 error: { code: 'PERMISSION_DENIED', message: `Missing required permissions: ${routeDef.requiredScopes?.join(', ')}` },
@@ -226,7 +213,7 @@ export async function routeExecution(
 
         const childCtx: RouteContext = {
             ...ctx,
-            callStack: [...callStack, route]
+            callStack: [...callStack, route],
         };
 
         log('Executing route', { route, ctx: ctx.requestId, depth: callStack.length });

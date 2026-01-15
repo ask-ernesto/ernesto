@@ -15,24 +15,17 @@ export interface Domain {
 
     /**
      * All routes for this domain
-     * - Instructions: workflow guidance that unlocks tools
-     * - Tools: operations with input schemas, hidden from search
-     * - Templates: pre-built operations returning MarkdownUI
-     * - Resources: content routes generated from extractors
      */
     routes: Route[];
 
     /**
-     * Knowledge extractors for generating informational routes (optional)
-     * System converts extracted content into informational routes automatically
+     * Knowledge extractors
      */
     extractors?: PipelineConfig[];
 
     /**
      * Search configuration (optional)
      * Defines how this domain's content should be ranked in search.
-     * All searches use semantic mode for meaning-based discovery.
-     * If not provided, uses default: content-weighted semantic search.
      */
     searchConfig?: DomainSearchConfig;
 
@@ -49,21 +42,6 @@ export interface Domain {
  *
  * @param config - Domain configuration
  * @returns Complete Domain object
- *
- * @example
- * ```typescript
- * export const myDomain = createDomain({
- *     name: 'my-domain',
- *     description: 'My domain description',
- *     routes: [route1, route2],
- *     resourceTree: myResourceTree,  // optional
- *     searchConfig: {                // optional
- *         queryBy: 'description,name,content',
- *         weights: '4,2,1',
- *         mode: 'hybrid'
- *     }
- * });
- * ```
  */
 export function createDomain(config: {
     name: string;
@@ -79,6 +57,6 @@ export function createDomain(config: {
         routes: config.routes,
         ...(config.extractors && { extractors: config.extractors }),
         ...(config.searchConfig && { searchConfig: config.searchConfig }),
-        ...(config.requiredScopes && { requiredScopes: config.requiredScopes })
+        ...(config.requiredScopes && { requiredScopes: config.requiredScopes }),
     };
 }

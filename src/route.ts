@@ -229,10 +229,7 @@ export function contentOnly(content: string): GuidedContent {
 export type GuidanceRule<I, R> = {
     route: string;
     prose: string | ((input: I, result: R) => string);
-} & (
-    | { always: true }
-    | { when: (result: R) => boolean }
-);
+} & ({ always: true } | { when: (result: R) => boolean });
 
 /**
  * Record of named guidance rules
@@ -256,9 +253,7 @@ export interface GuidanceSchema<I, R> {
  * Each rule must specify either `always: true` or `when: fn`.
  * Rules are evaluated in definition order.
  */
-export function defineGuidance<I, R>(
-    rules: GuidanceRules<I, R>
-): GuidanceSchema<I, R> {
+export function defineGuidance<I, R>(rules: GuidanceRules<I, R>): GuidanceSchema<I, R> {
     return {
         resolve(input: I, result: R): RouteGuidance[] {
             const output: RouteGuidance[] = [];
@@ -269,15 +264,13 @@ export function defineGuidance<I, R>(
                 if (include) {
                     output.push({
                         route: rule.route,
-                        prose: typeof rule.prose === 'function'
-                            ? rule.prose(input, result)
-                            : rule.prose,
+                        prose: typeof rule.prose === 'function' ? rule.prose(input, result) : rule.prose,
                     });
                 }
             }
 
             return output;
-        }
+        },
     };
 }
 
@@ -285,7 +278,7 @@ export function defineGuidance<I, R>(
  * Empty guidance - for routes that use createRoute but have no guidance rules
  */
 export const noGuidance: GuidanceSchema<unknown, unknown> = {
-    resolve: () => []
+    resolve: () => [],
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -328,6 +321,6 @@ export function createRoute<I, R>(config: RouteConfig<I, R>): Route<I> {
                 content,
                 guidance: config.guidance.resolve(params, result),
             };
-        }
+        },
     };
 }
