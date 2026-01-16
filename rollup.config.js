@@ -18,5 +18,12 @@ export default {
             entryFileNames: '[name].js',
         },
     ],
-    plugins: [typescript()],
+    plugins: [
+        typescript({
+            compilerOptions: {
+                rootDir: 'src',
+                declarationDir: 'dist',
+            },
+        }),
+    ],
 };
