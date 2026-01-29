@@ -225,7 +225,7 @@ export async function routeExecution(route: string, params: unknown, ctx: RouteC
         const duration = Date.now() - startTime;
         log('Route executed', { route, duration });
 
-        // Append guidance if present
+        // Append markdown guidance for human readability
         let finalContent = content;
         if (guidance.length > 0) {
             const routeLookup = createRouteLookup(ctx);
@@ -235,9 +235,11 @@ export async function routeExecution(route: string, params: unknown, ctx: RouteC
             }
         }
 
+        // Return both data (with markdown) AND structured guidance as separate fields
         return {
             success: true,
             data: finalContent,
+            guidance: guidance.length > 0 ? guidance : undefined,
         };
     } catch (error: any) {
         log('Unexpected error in route execution', { route, error });

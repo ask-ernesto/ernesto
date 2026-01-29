@@ -163,6 +163,7 @@ export interface Route<TInput = unknown> {
 export interface RouteResult<T = unknown> {
     success: boolean;
     data?: T;
+    guidance?: RouteGuidance[];
     error?: {
         code: string;
         message: string;
