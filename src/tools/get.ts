@@ -56,6 +56,7 @@ export function createGetTool(context: RouteContext, description: string) {
                             route,
                             success: result.success,
                             data: result.data,
+                            guidance: result.guidance,
                             error: result.error,
                         };
                     } catch (error) {
