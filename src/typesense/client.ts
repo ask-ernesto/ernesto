@@ -110,10 +110,10 @@ export async function searchMcpResources(
         const userScopes = scopes || [];
         if (userScopes.length > 0) {
             // Get unrestricted docs OR docs with at least one matching scope
-            filters.push(`is_unrestricted:true || scopes:[${userScopes.join(',')}]`);
+            filters.push(`(is_unrestricted:true || scopes:[${userScopes.join(',')}])`);
         } else {
             // User has no scopes = only see unrestricted docs
-            filters.push('is_unrestricted:true');
+            filters.push(`(${filterBy})`);
         }
 
         const filter_by = filters.length > 0 ? filters.join(' && ') : undefined;
