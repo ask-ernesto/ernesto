@@ -54,11 +54,11 @@
   },
   "peerDependencies": {
     "@modelcontextprotocol/sdk": "^1.23.0",
-    "typesense": "^2.1.0"
+    "typesense": "^2.1.0",
+    "zod": "^4.1"
   },
   "dependencies": {
     "@toon-format/toon": "^2.1.0",
-    "debug": "^4",
-    "zod": "^4.1"
+    "debug": "^4"
   }
 }
