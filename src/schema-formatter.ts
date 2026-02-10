@@ -178,8 +178,16 @@ function getFieldType(schema: z.ZodSchema): string {
     }
 
     if (baseSchema instanceof z.ZodArray) {
-        const elementType = getFieldType((baseSchema as any)._def.type as z.ZodSchema);
-        return `array of ${elementType}`;
+        // Zod v4 uses _def.element, Zod v3 uses _def.type
+        const elementSchema = (baseSchema as any)._def.element ?? (baseSchema as any)._def.type;
+        if (elementSchema instanceof z.ZodObject) {
+            const keys = Object.keys(elementSchema.shape);
+            if (keys.length > 0) {
+                const fields = keys.map((k: string) => `${k}: ${getFieldType(elementSchema.shape[k])}`);
+                return `array of {${fields.join(', ')}}`;
+            }
+        }
+        return `array of ${getFieldType(elementSchema as z.ZodSchema)}`;
     }
 
     if (baseSchema instanceof z.ZodObject) {
