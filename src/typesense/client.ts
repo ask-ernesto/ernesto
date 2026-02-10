@@ -113,10 +113,10 @@ export async function searchMcpResources(
             filters.push(`(is_unrestricted:true || scopes:[${userScopes.join(',')}])`);
         } else {
             // User has no scopes = only see unrestricted docs
-            filters.push(`(${filterBy})`);
+            filters.push('is_unrestricted:true');
         }
 
-        const filter_by = filters.length > 0 ? filters.join(' && ') : undefined;
+        const filter_by = filters.join(' && ');
 
         // Configure search params based on mode and domain config
         const searchParams: SearchParams<McpResourceDocument> = {
@@ -134,25 +134,21 @@ export async function searchMcpResources(
         };
 
         // Default weights: content-first (4,2,1 for content,name,description)
-        const defaultWeights = '4,2,1';
-        const effectiveWeights = weights || defaultWeights;
+        searchParams.query_by_weights = weights || '4,2,1';
 
         if (mode === 'keyword') {
             // Keyword mode: Prioritize exact matches heavily
-            searchParams.query_by_weights = effectiveWeights;
             searchParams.prioritize_exact_match = true;
             searchParams.prioritize_token_position = true;
             searchParams.typo_tokens_threshold = 0; // No typo tolerance
             searchParams.num_typos = 0; // Strict matching
         } else if (mode === 'semantic') {
             // Semantic mode: Use vector search / semantic ranking
-            searchParams.query_by_weights = effectiveWeights;
             searchParams.prioritize_exact_match = false;
             searchParams.prioritize_token_position = false;
             searchParams.num_typos = 2; // More typo tolerance for semantic search
         } else {
             // Hybrid mode (default): Balance both
-            searchParams.query_by_weights = effectiveWeights;
             searchParams.prioritize_exact_match = true; // Exact phrases rank higher
             searchParams.prioritize_token_position = true; // Early matches rank higher
             searchParams.num_typos = 1; // Some typo tolerance
@@ -218,8 +214,6 @@ export async function getMcpResourceStats(ernesto: Ernesto): Promise<{
     byDomain: Record<string, number>;
 } | null> {
     try {
-        const collection = await ernesto.typesense.collections(MCP_RESOURCES_COLLECTION).retrieve();
-
         // Get counts by domain using facet search
         const result = await ernesto.typesense.collections(MCP_RESOURCES_COLLECTION).documents().search({
             q: '*',
@@ -240,7 +234,7 @@ export async function getMcpResourceStats(ernesto: Ernesto): Promise<{
         }
 
         return {
-            total: collection.num_documents || 0,
+            total: result.found || 0,
             byDomain,
         };
     } catch (error) {
@@ -336,23 +330,13 @@ export async function getDocumentByUri(ernesto: Ernesto, uri: string): Promise<M
         // Use document ID lookup (base64 of URI) for exact match
         // This is more reliable than filter_by for URIs with special characters
         const docId = Buffer.from(uri).toString('base64');
+        const doc = await ernesto.typesense.collections(MCP_RESOURCES_COLLECTION).documents(docId).retrieve();
 
-        try {
-            const doc = await ernesto.typesense.collections(MCP_RESOURCES_COLLECTION).documents(docId).retrieve();
-
-            return doc as McpResourceDocument;
-        } catch (retrieveError) {
-            // Document not found by ID
-            if (retrieveError.httpStatus === 404) {
-                return null;
-            }
-            throw retrieveError;
-        }
+        return doc as McpResourceDocument;
     } catch (error) {
         if (error.httpStatus === 404) {
             return null;
         }
-
         throw error;
     }
 }
