@@ -1,17 +1,11 @@
 /**
  * MCP Tool: ask
  *
- * Semantic search across Ernesto.
- *
- * TWO SOURCES:
- * 1. Searchable routes from RouteRegistry (always surfaced)
- * 2. Resources from Typesense (semantic search)
- *
- * Hidden routes are never returned - only via get() or unveils.
+ * Semantic search across Ernesto — returns skills with tool listings + resources.
  */
 
 import { z } from 'zod';
-import { RouteContext } from '../route';
+import { ToolContext } from '../skill';
 import { formatZodSchemaForAgent } from '../schema-formatter';
 import { searchResources } from '../typesense/search';
 import debug from 'debug';
@@ -24,7 +18,7 @@ const inputSchema = z.object({
     perDomain: z.number().min(1).max(50).default(10).optional().describe('Maximum results per domain (default: 10)'),
 });
 
-export function createAskTool(context: RouteContext, description: string) {
+export function createAskTool(context: ToolContext, description: string) {
     return {
         name: 'ask',
         description,
@@ -55,32 +49,42 @@ interface SearchParams {
     perDomain: number;
 }
 
-/**
- * Execute search combining routes + resources
- */
-async function executeSearch(ctx: RouteContext, params: SearchParams): Promise<string> {
+async function executeSearch(ctx: ToolContext, params: SearchParams): Promise<string> {
     const { query, domain, perDomain } = params;
 
-    // Get domains to search
-    const allDomains = ctx.ernesto.domainRegistry.getAll();
-    const domainsToSearch = domain ? allDomains.filter((d) => d.name === domain) : allDomains;
-
-    // Build response structure
     const response: Record<string, any> = {};
 
-    // Search each domain
-    for (const domainConfig of domainsToSearch) {
-        const domainName = domainConfig.name;
-        const searchConfig = domainConfig.searchConfig || {};
+    const allSkills = ctx.ernesto.skillRegistry.getAll();
+    const skillsToSearch = domain ? allSkills.filter((s) => s.name === domain) : allSkills;
 
-        // === PART 1: Get searchable routes from RouteRegistry (always surfaced) ===
-        const routeResults = getSearchableRoutes(ctx, domainName).map((r) => ({ ...r, type: 'route' as const }));
+    for (const skill of skillsToSearch) {
+        const skillName = skill.name;
+        const searchConfig = skill.searchConfig || {};
 
-        // === PART 2: Get resources from Typesense (semantic search) ===
+        if (skill.requiredScopes?.length) {
+            const hasPermission = skill.requiredScopes.every((s) => ctx.scopes?.includes(s));
+            if (!hasPermission) continue;
+        }
+
+        // Build tool listing as the skill entry point
+        const routeResults: any[] = [];
+
+        const toolListing = skill.tools.map((t) => {
+            const params = t.inputSchema ? formatZodSchemaForAgent(t.inputSchema) : undefined;
+            return `${skill.name}:${t.name} - ${t.description}${params ? ` (${params})` : ''}`;
+        }).join('; ');
+
+        routeResults.push({
+            route: skill.name,
+            description: `${skill.description}${toolListing ? ` | Tools: ${toolListing}` : ''}`,
+            type: 'skill' as const,
+        });
+
+        // Get resources from Typesense (semantic search)
         const resourceResults = (
             await searchResources(ctx.ernesto, {
                 query,
-                domain: domainName,
+                domain: skillName,
                 segments: searchConfig.segments,
                 queryBy: searchConfig.queryBy,
                 weights: searchConfig.weights,
@@ -88,15 +92,12 @@ async function executeSearch(ctx: RouteContext, params: SearchParams): Promise<s
             })
         ).map((r) => ({ route: r.uri, description: r.description, type: 'resource' as const, segment: r.segment }));
 
-        // === COMBINE: All routes first, then limited resources ===
         const limitedResults = [...routeResults, ...resourceResults.slice(0, perDomain)];
 
-        // Only include domain if it has matching results
         if (limitedResults.length === 0) continue;
 
-        // Build domain response
-        response[domainName] = {
-            description: domainConfig.description,
+        response[skillName] = {
+            description: skill.description,
             routes: {
                 list: limitedResults,
                 count: limitedResults.length,
@@ -113,70 +114,9 @@ async function executeSearch(ctx: RouteContext, params: SearchParams): Promise<s
     return formatSearchResponse(response);
 }
 
-/**
- * Get all searchable routes for a domain from RouteRegistry
- */
-function getSearchableRoutes(
-    ctx: RouteContext,
-    domainName: string,
-): {
-    route: string;
-    description: string;
-    permissions?: string[];
-    parameters?: string;
-}[] {
-    const allRoutes = ctx.ernesto.routeRegistry.getAll();
-    const domainSearchableRoutes = allRoutes.filter((r) => r.route.startsWith(`${domainName}://`) && r.searchable);
-
-    const results: {
-        route: string;
-        description: string;
-        permissions?: string[];
-        parameters?: string;
-    }[] = [];
-
-    for (const route of domainSearchableRoutes) {
-        // Check permissions
-        if (route.requiredScopes && route.requiredScopes.length > 0) {
-            const hasPermission = route.requiredScopes.every((p) => ctx.scopes?.includes(p));
-            if (!hasPermission) continue;
-        }
-
-        const routeInfo: {
-            route: string;
-            description: string;
-            permissions?: string[];
-            parameters?: string;
-        } = {
-            route: route.route,
-            description: route.description,
-        };
-
-        if (route.requiredScopes) {
-            routeInfo.permissions = route.requiredScopes;
-        }
-
-        // Include input schema if route has parameters
-        if (route.inputSchema) {
-            const parameters = formatZodSchemaForAgent(route.inputSchema, 'Parameters');
-            if (parameters) {
-                routeInfo.parameters = parameters;
-            }
-        }
-
-        results.push(routeInfo);
-    }
-
-    return results;
-}
-
-/**
- * Format search response as markdown with embedded data
- */
 function formatSearchResponse(response: Record<string, any>): string {
     const parts: string[] = [];
 
-    // Domain results
     const domains = Object.keys(response);
 
     if (domains.length === 0) {

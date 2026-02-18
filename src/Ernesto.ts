@@ -1,8 +1,11 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { DomainRegistry } from './domain-registry';
-import { RouteRegistry } from './router';
-import { RouteContext } from './route';
-import { Domain } from './domain';
+import { Skill } from './skill';
+import { SkillRegistry, SkillSnapshot } from './skill-registry';
+import { ToolContext } from './skill';
+import { Soul } from './soul';
+import { MemoryStore } from './memory';
+import { HeartbeatConfig } from './heartbeat';
+import { SystemPromptBuilder, createDefaultPromptBuilder } from './system-prompt';
 import debug from 'debug';
 import { ContentPipeline } from './pipelines';
 import { ResourceNode, DEFAULT_CACHE_TTL_MS, PipelineConfig } from './types';
@@ -17,79 +20,138 @@ import { truncateText, flattenResources } from './utils';
 const log = debug('Ernesto');
 
 interface ErnestoOptions {
-    domains: Domain[];
+    skills?: Skill[];
+    skillRegistry?: SkillRegistry;
     typesense: TypesenseClient;
-    instructionRegistry: InstructionRegistry;
+    instructionRegistry?: InstructionRegistry;
+    memory?: MemoryStore;
+    soul?: Soul;
+    heartbeat?: HeartbeatConfig;
+    systemPrompt?: string | SystemPromptBuilder;
 }
 
 /**
- * Ernesto - The unified knowledge system
- *
- * ARCHITECTURE:
- * - Sources: Where data comes from (local files, external APIs, etc.)
- * - Index: Typesense for semantic search and freshness tracking
- * - Routes: HTTP-like endpoints (domain://path) for accessing knowledge
- *
- * INITIALIZATION FLOW:
- * 1. Register static routes (TypeScript-defined tools)
- * 2. For each source:
- *    - Check Typesense for freshness (indexed_at + TTL)
- *    - If FRESH: skip (data already in index)
- *    - If STALE: fetch from source → index (new indexed_at)
+ * Serializable snapshot of Ernesto state (for dashboard)
+ */
+export interface ErnestoSnapshot {
+    skills: SkillSnapshot[];
+    toolCount: number;
+    soul: Soul | null;
+    memory: boolean;
+    heartbeat: HeartbeatConfig | null;
+}
+
+/**
+ * Ernesto - OpenClaw for Organizations
  */
 export class Ernesto {
-    readonly domainRegistry = new DomainRegistry();
-    readonly routeRegistry = new RouteRegistry();
+    // ─── Core Registry ──────────────────────────────────────────────────
+    readonly skillRegistry: SkillRegistry;
+
+    // ─── Infrastructure ─────────────────────────────────────────────────
     readonly typesense: TypesenseClient;
-    readonly instructionRegistry: InstructionRegistry;
+    readonly instructionRegistry: InstructionRegistry | null;
     readonly lifecycle = new LifecycleService(this);
 
-    constructor({ domains, typesense, instructionRegistry }: ErnestoOptions) {
-        this.domainRegistry.registerAll(domains);
-        this.typesense = typesense;
-        this.instructionRegistry = instructionRegistry;
+    // ─── OpenClaw Primitives ────────────────────────────────────────────
+    private _soul: Soul | null = null;
+    private _memory: MemoryStore | null = null;
+    private _heartbeat: HeartbeatConfig | null = null;
+    private _systemPromptBuilder: SystemPromptBuilder;
+
+    constructor(opts: ErnestoOptions) {
+        this.typesense = opts.typesense;
+        this.instructionRegistry = opts.instructionRegistry ?? null;
+
+        // Skill registry: use injected registry or create a new one
+        if (opts.skillRegistry) {
+            this.skillRegistry = opts.skillRegistry;
+        } else {
+            this.skillRegistry = new SkillRegistry();
+            if (opts.skills?.length) {
+                this.skillRegistry.registerAll(opts.skills);
+            }
+        }
+
+        // OpenClaw primitives
+        this._soul = opts.soul ?? null;
+        this._memory = opts.memory ?? null;
+        this._heartbeat = opts.heartbeat ?? null;
+        this._systemPromptBuilder = opts.systemPrompt instanceof SystemPromptBuilder
+            ? opts.systemPrompt
+            : createDefaultPromptBuilder();
+
+        if (typeof opts.systemPrompt === 'string') {
+            this._systemPromptBuilder.addSection('custom', opts.systemPrompt, 50);
+        }
+    }
+
+    // ============================================================
+    // PUBLIC ACCESSORS (OpenClaw-compatible surface)
+    // ============================================================
+
+    get skills(): SkillRegistry {
+        return this.skillRegistry;
+    }
+
+    get soul(): Soul | null {
+        return this._soul;
+    }
+
+    get memory(): MemoryStore | null {
+        return this._memory;
+    }
+
+    get heartbeat(): HeartbeatConfig | null {
+        return this._heartbeat;
+    }
+
+    get systemPrompt(): string {
+        return this._systemPromptBuilder.build({
+            skills: this.skillRegistry.getAll(),
+            soul: this._soul ?? undefined,
+        });
     }
 
     // ============================================================
     // PUBLIC API
     // ============================================================
 
-    /**
-     * Attach Ernesto to an MCP server
-     */
-    public async attachToMcpServer(server: McpServer, context: RouteContext): Promise<void> {
+    public async attachToMcpServer(server: McpServer, context: ToolContext): Promise<void> {
         const { attachErnestoTools } = await import('./ernesto-tools');
         await attachErnestoTools(this, server, context);
     }
 
-    /**
-     * Build instruction context from current state
-     */
     public async buildInstructionContext() {
         return buildInstructionContext(this);
     }
 
-    /**
-     * Initialize Ernesto
-     */
+    public toJSON(): ErnestoSnapshot {
+        return {
+            skills: this.skillRegistry.toJSON(),
+            toolCount: this.skillRegistry.getAllTools().length,
+            soul: this._soul,
+            memory: this._memory !== null,
+            heartbeat: this._heartbeat,
+        };
+    }
+
     public async initialize(): Promise<void> {
         const startTime = Date.now();
         log('Initializing...');
 
-        this.registerStaticRoutes();
-
         const stats = { fresh: 0, fetched: 0, failed: 0 };
 
-        for (const domain of this.domainRegistry.getAll()) {
-            if (!domain.extractors) continue;
+        for (const skill of this.skillRegistry.getAll()) {
+            if (!skill.resources) continue;
 
-            for (const extractor of domain.extractors) {
+            for (const extractor of skill.resources) {
                 try {
-                    const result = await this.initializeSource(domain.name, extractor);
+                    const result = await this.initializeSource(skill.name, extractor);
                     result.wasFresh ? stats.fresh++ : stats.fetched++;
                 } catch (error) {
                     log('Failed to initialize source', {
-                        domain: domain.name,
+                        skill: skill.name,
                         source: extractor.source.name,
                         error,
                     });
@@ -100,7 +162,8 @@ export class Ernesto {
 
         log('Initialization complete', {
             duration: Date.now() - startTime,
-            routes: this.routeRegistry.getAll().length,
+            skills: this.skillRegistry.getAll().length,
+            tools: this.skillRegistry.getAllTools().length,
             ...stats,
         });
     }
@@ -109,10 +172,7 @@ export class Ernesto {
     // PRIVATE: SOURCE INITIALIZATION
     // ============================================================
 
-    /**
-     * Initialize a single source - skip if fresh, fetch if stale
-     */
-    private async initializeSource(domainName: string, extractor: PipelineConfig): Promise<{ wasFresh: boolean }> {
+    private async initializeSource(skillName: string, extractor: PipelineConfig): Promise<{ wasFresh: boolean }> {
         const pipeline = new ContentPipeline({
             source: extractor.source,
             formats: extractor.formats,
@@ -122,8 +182,6 @@ export class Ernesto {
         const ttlMs = extractor.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
         const isLocal = extractor.source.name.startsWith('local:');
 
-        // Local sources always fetch (fast, may have new files)
-        // Third-party sources check freshness first
         if (!isLocal) {
             const freshness = await getSourceFreshness(this, sourceId);
             if (freshness && freshness.ageMs < ttlMs) {
@@ -135,18 +193,14 @@ export class Ernesto {
             }
         }
 
-        // Fetch and index
-        await this.fetchAndIndexSource(pipeline, sourceId, domainName, extractor);
+        await this.fetchAndIndexSource(pipeline, sourceId, skillName, extractor);
         return { wasFresh: false };
     }
 
-    /**
-     * Fetch source from origin and index to Typesense
-     */
     private async fetchAndIndexSource(
         pipeline: ContentPipeline,
         sourceId: string,
-        domainName: string,
+        skillName: string,
         extractor: PipelineConfig,
     ): Promise<void> {
         const resources = await pipeline.fetchResources();
@@ -157,53 +211,40 @@ export class Ernesto {
         }
 
         await deleteSourceDocuments(this, sourceId);
-        await this.indexResources(sourceId, domainName, extractor, resources);
+        await this.indexResources(sourceId, skillName, extractor, resources);
 
         log('Indexed source', {
             sourceId,
-            domainName,
+            skillName,
             resourceCount: resources.length,
         });
     }
 
-    /**
-     * Index resources to Typesense
-     */
     public async indexResources(
         sourceId: string,
-        domainName: string,
+        skillName: string,
         pipelineConfig: PipelineConfig,
         resources: ResourceNode[],
     ): Promise<void> {
-        // Get domain and merge scopes
-        const domain = this.domainRegistry.get(domainName);
-        const domainScopes = domain?.requiredScopes || [];
+        const skill = this.skillRegistry.get(skillName);
+        const parentScopes = skill?.requiredScopes || [];
         const pipelineScopes = pipelineConfig.scopes || [];
+        const mergedScopes = [...new Set([...parentScopes, ...pipelineScopes])];
 
-        // Merge domain + pipeline scopes (following same pattern as routes)
-        const mergedScopes = [...new Set([...domainScopes, ...pipelineScopes])];
-
-        // Flatten resources (handle nested children)
         const flatResources = flattenResources(resources);
 
-        // Build documents for this source
         const documents: McpResourceDocument[] = flatResources.map((resource) => {
             const path = resource.path.startsWith('/') ? resource.path.slice(1) : resource.path;
-            const uri = `${domainName}://resources/${path}`;
-
-            // Description from ResourceNode or truncate content
+            const uri = `${skillName}://resources/${path}`;
             const description = truncateText(resource.description || resource.content);
 
-            // Scopes: empty array = unrestricted (visible to all)
-            // Non-empty array = restricted (user must have ALL scopes)
-            // Use merged scopes unless resource explicitly overrides
             const resourceScopes = resource.metadata?.scopes;
             const finalScopes = resourceScopes !== undefined ? resourceScopes : mergedScopes;
 
             return {
                 id: Buffer.from(uri).toString('base64'),
                 uri,
-                domain: domainName,
+                domain: skillName,
                 path,
                 source_id: sourceId,
                 name: resource.name,
@@ -221,29 +262,5 @@ export class Ernesto {
         });
 
         await indexMcpResources(this, documents);
-    }
-
-    // ============================================================
-    // PRIVATE: HELPERS
-    // ============================================================
-
-    /**
-     * Register static routes with domain-level scopes applied
-     */
-    private registerStaticRoutes(): void {
-        for (const domain of this.domainRegistry.getAll()) {
-            if (!domain.requiredScopes?.length) {
-                this.routeRegistry.registerAll(domain.routes);
-                continue;
-            }
-
-            // Merge domain scopes into each route
-            const routesWithScopes = domain.routes.map((route) => ({
-                ...route,
-                requiredScopes: [...new Set([...domain.requiredScopes!, ...(route.requiredScopes || [])])],
-            }));
-
-            this.routeRegistry.registerAll(routesWithScopes);
-        }
     }
 }

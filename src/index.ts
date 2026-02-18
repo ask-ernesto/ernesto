@@ -1,28 +1,52 @@
 // Library entry point
 
+// ─── Core ────────────────────────────────────────────────────────────────
 export { Ernesto } from './Ernesto';
+export type { ErnestoSnapshot } from './Ernesto';
 
-export { createDomain } from './domain';
-export type { Domain } from './domain';
-export { createRoute, contentOnly, defineGuidance, noGuidance } from './route';
+// ─── Skills (OpenClaw primitives) ────────────────────────────────────────
+export { createSkill, createTool, defineSuggestions, toolResult, toolResultWithSuggestions } from './skill';
+export type {
+    Skill, SkillTool, ToolContext, SkillContext, ToolResult, Suggestion, Freshness,
+    ToolConfig, SuggestionRule, SuggestionSchema, SuggestionTarget,
+    DomainSearchConfig, SearchSegment,
+} from './skill';
+export { SkillRegistry } from './skill-registry';
+export type { SkillSnapshot, ToolRef, SkillSourceInfo } from './skill-registry';
+export { skillToMarkdown, skillFromMarkdown } from './skill-io';
 
+// ─── Soul ────────────────────────────────────────────────────────────────
+export { renderSoul } from './soul';
+export type { Soul } from './soul';
+
+// ─── Memory ──────────────────────────────────────────────────────────────
+export type { MemoryStore, MemoryEntry, MemoryMeta, MemoryFilter } from './memory';
+
+// ─── Heartbeat ───────────────────────────────────────────────────────────
+export type { HeartbeatConfig, TimeWindow } from './heartbeat';
+
+// ─── System Prompt ───────────────────────────────────────────────────────
+export { SystemPromptBuilder, createDefaultPromptBuilder, buildSkillCatalog } from './system-prompt';
+export type { PromptContext } from './system-prompt';
+
+// ─── Tools ───────────────────────────────────────────────────────────────
 export { createAskTool } from './tools/ask';
-export { createGetTool } from './tools/get';
+export { createRunTool } from './tools/run';
 
+// ─── Instructions (legacy — use SystemPromptBuilder for new code) ────────
 export { InstructionRegistry } from './instructions/registry';
-export type { InstructionTemplate } from './instructions/types';
-export type { InstructionContent, InstructionContext } from './instructions/types';
+export type { InstructionTemplate, InstructionContent, InstructionContext } from './instructions/types';
+
+// ─── Pipelines ───────────────────────────────────────────────────────────
 export { generateSourceId, ContentPipeline } from './pipelines';
 
-export { searchMcpResources } from './typesense/client';
-
+// ─── Typesense ───────────────────────────────────────────────────────────
+export { searchMcpResources, exportSourceDocuments, getSourceFreshness, getMcpResourceStats } from './typesense/client';
 export type { McpResourceSearchResult } from './typesense/schema';
-export { exportSourceDocuments, getSourceFreshness, getMcpResourceStats } from './typesense/client';
 
+// ─── Types ───────────────────────────────────────────────────────────────
 export { DEFAULT_CACHE_TTL_MS } from './types';
-
 export type { ResourceNode, RawContent, ContentFormat, ContentSource, PipelineConfig, RawDocument } from './types';
 
-export type { Route, RouteContext, GuidedContent, RouteGuidance } from './route';
-
+// ─── Lifecycle ───────────────────────────────────────────────────────────
 export { LifecycleService } from './LifecycleService';

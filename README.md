@@ -2,6 +2,8 @@
 
 A context system that structures organizational knowledge and makes it accessible efficiently to AI agents.
 
+> Note (2026-02-18): This README still contains legacy Route-era examples (`searchable`/`hidden` tools and `domain://tools/...` URIs). The current runtime model uses Skills + always-visible tools (`skill:tool`) with role-based guidance.
+
 ---
 
 ## The Problem

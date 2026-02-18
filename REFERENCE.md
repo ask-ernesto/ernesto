@@ -2,6 +2,8 @@
 
 > **Start with the [README](./README.md)** for core concepts and quick examples.
 > This document is the **implementation spec**: type definitions, internal flows, and how the system works.
+>
+> **Note (2026-02-18):** Sections below use legacy Route-era terms (`searchable`/`hidden`, `domain://tools/...`). Current runtime behavior uses Skills + always-visible tools (`skill:tool`) with suggestions for workflow guidance.
 
 ---
 
