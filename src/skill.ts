@@ -79,10 +79,10 @@ export interface ToolResult {
 export type Freshness = 'live' | 'static' | 'unknown';
 
 /**
- * A tool within a skill - always visible, no hidden concept.
+ * A tool within a skill.
  *
- * Replaces Route: same execution model, but without searchable/hidden distinction.
- * Progressive disclosure is in the skill instruction markdown, not in tool visibility.
+ * Progressive workflow guidance belongs in instructions and suggestions,
+ * not in visibility flags.
  */
 export interface SkillTool<TInput = unknown> {
     /** Tool name within the skill (e.g., 'query', 'revenue-breakdown') */
@@ -165,7 +165,7 @@ export interface Skill {
      */
     instruction: string | ((ctx: SkillContext) => Promise<string>);
 
-    /** Tools — always visible, no hidden concept */
+    /** Tools available in this skill */
     tools: SkillTool<any>[];
 
     /** Knowledge extractors (indexed to Typesense as resources) */

@@ -107,11 +107,6 @@ async function resolveAndExecute(
         return fetchResource(identifier, ctx);
     }
 
-    // Legacy URI format: domain://tools/{path} (optionally with /hidden/) → convert to domain:name
-    if (identifier.includes('://tools/')) {
-        identifier = convertLegacyUri(identifier);
-    }
-
     const colonIdx = identifier.indexOf(':');
 
     // No colon → skill name only → return instruction
@@ -124,19 +119,6 @@ async function resolveAndExecute(
     const toolName = identifier.substring(colonIdx + 1);
 
     return executeSkillTool(skillName, toolName, params, ctx);
-}
-
-/**
- * Convert legacy domain://tools/path URIs to skill:tool-name format.
- * e.g. "redshift://tools/hidden/revenue-breakdown" → "redshift:revenue-breakdown"
- *      "teams://tools/activity-report" → "teams:activity-report"
- */
-function convertLegacyUri(uri: string): string {
-    const match = uri.match(/^([^:]+):\/\/tools\/(?:hidden\/)?(.+)$/);
-    if (match) {
-        return `${match[1]}:${match[2]}`;
-    }
-    return uri;
 }
 
 async function executeSkillTool(

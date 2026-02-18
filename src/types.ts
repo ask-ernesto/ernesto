@@ -17,8 +17,8 @@ export interface ResourceNode<TMeta = any> {
     path: string;
 
     /**
-     * REQUIRED: Full searchable content
-     * What the user searches through to find this resource
+     * REQUIRED: Full indexed content
+     * What semantic search evaluates to find this resource.
      */
     content: string;
 
