@@ -2,11 +2,18 @@
  * Memory - OpenClaw MEMORY.md + daily logs equivalent
  *
  * Interface for persistent memory across conversations.
- * Two scopes: org memory (shared) + personal memory (per-user).
+ * Multi-scope access model (org/personal/workflow/shared) with
+ * category-based semantic types (long-term/lesson/active-task/tool-config).
  *
  * Implementation is in the backend (MongoDB + Typesense),
  * this file defines the interface contract.
  */
+
+/**
+ * Memory categories — orthogonal to scope.
+ * Scopes control who sees it, categories control what kind of thing it is.
+ */
+export type MemoryCategory = 'long-term' | 'lesson' | 'active-task' | 'tool-config';
 
 /**
  * Memory entry metadata
@@ -20,6 +27,8 @@ export interface MemoryMeta {
     updatedAt?: Date;
     /** Optional tags for categorization */
     tags?: string[];
+    /** Memory category. Defaults to 'long-term' if not specified. */
+    category?: MemoryCategory;
 }
 
 /**
@@ -41,6 +50,8 @@ export interface MemoryFilter {
     tag?: string;
     /** Filter by source */
     source?: string;
+    /** Filter by category */
+    category?: MemoryCategory;
     /** Maximum entries to return */
     limit?: number;
 }

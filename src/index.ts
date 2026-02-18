@@ -20,7 +20,7 @@ export { renderSoul } from './soul';
 export type { Soul } from './soul';
 
 // ─── Memory ──────────────────────────────────────────────────────────────
-export type { MemoryStore, MemoryEntry, MemoryMeta, MemoryFilter } from './memory';
+export type { MemoryStore, MemoryEntry, MemoryMeta, MemoryFilter, MemoryCategory } from './memory';
 
 // ─── Heartbeat ───────────────────────────────────────────────────────────
 export type { HeartbeatConfig, TimeWindow } from './heartbeat';
