@@ -12,6 +12,7 @@ export type {
     DomainSearchConfig, SearchSegment,
 } from './skill';
 export { SkillRegistry } from './skill-registry';
+export { getVisibleSkills } from './skill-visibility';
 export type { SkillSnapshot, ToolRef, SkillSourceInfo } from './skill-registry';
 export { skillToMarkdown, skillFromMarkdown } from './skill-io';
 
@@ -19,18 +20,16 @@ export { skillToMarkdown, skillFromMarkdown } from './skill-io';
 export { renderSoul } from './soul';
 export type { Soul } from './soul';
 
-// ─── Memory ──────────────────────────────────────────────────────────────
-export type { MemoryStore, MemoryEntry, MemoryMeta, MemoryFilter, MemoryCategory } from './memory';
-
 // ─── Heartbeat ───────────────────────────────────────────────────────────
 export type { HeartbeatConfig, TimeWindow } from './heartbeat';
 
 // ─── System Prompt ───────────────────────────────────────────────────────
 export { SystemPromptBuilder, createDefaultPromptBuilder, buildSkillCatalog } from './system-prompt';
-export type { PromptContext } from './system-prompt';
+export type { PromptContext, RenderedPromptSection } from './system-prompt';
 
 // ─── Tools ───────────────────────────────────────────────────────────────
 export { createAskTool } from './tools/ask';
+export type { AskToolOptions } from './tools/ask';
 export { createRunTool } from './tools/run';
 
 // ─── Instructions (legacy — use SystemPromptBuilder for new code) ────────

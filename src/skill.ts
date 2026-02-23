@@ -13,6 +13,7 @@
 import { z } from 'zod';
 // eslint-disable-next-line import/no-cycle -- Type-only import, no runtime cycle
 import type { Ernesto } from './Ernesto';
+import type { Soul } from './soul';
 import { PipelineConfig } from './types';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -25,6 +26,8 @@ import { PipelineConfig } from './types';
 export interface ToolContext {
     user?: { id: string; email?: string };
     scopes?: string[];
+    visibleSkills?: string[];
+    soul?: Soul;
     requestId?: string;
     timestamp: number;
     ernesto: Ernesto;

@@ -2,10 +2,10 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Skill } from './skill';
 import { SkillRegistry, SkillSnapshot } from './skill-registry';
 import { ToolContext } from './skill';
+import { getVisibleSkills } from './skill-visibility';
 import { Soul } from './soul';
-import { MemoryStore } from './memory';
 import { HeartbeatConfig } from './heartbeat';
-import { SystemPromptBuilder, createDefaultPromptBuilder } from './system-prompt';
+import { SystemPromptBuilder, createDefaultPromptBuilder, RenderedPromptSection } from './system-prompt';
 import debug from 'debug';
 import { ContentPipeline } from './pipelines';
 import { ResourceNode, DEFAULT_CACHE_TTL_MS, PipelineConfig } from './types';
@@ -24,7 +24,6 @@ interface ErnestoOptions {
     skillRegistry?: SkillRegistry;
     typesense: TypesenseClient;
     instructionRegistry?: InstructionRegistry;
-    memory?: MemoryStore;
     soul?: Soul;
     heartbeat?: HeartbeatConfig;
     systemPrompt?: string | SystemPromptBuilder;
@@ -37,7 +36,6 @@ export interface ErnestoSnapshot {
     skills: SkillSnapshot[];
     toolCount: number;
     soul: Soul | null;
-    memory: boolean;
     heartbeat: HeartbeatConfig | null;
 }
 
@@ -55,7 +53,6 @@ export class Ernesto {
 
     // ─── OpenClaw Primitives ────────────────────────────────────────────
     private _soul: Soul | null = null;
-    private _memory: MemoryStore | null = null;
     private _heartbeat: HeartbeatConfig | null = null;
     private _systemPromptBuilder: SystemPromptBuilder;
 
@@ -75,7 +72,6 @@ export class Ernesto {
 
         // OpenClaw primitives
         this._soul = opts.soul ?? null;
-        this._memory = opts.memory ?? null;
         this._heartbeat = opts.heartbeat ?? null;
         this._systemPromptBuilder = opts.systemPrompt instanceof SystemPromptBuilder
             ? opts.systemPrompt
@@ -98,10 +94,6 @@ export class Ernesto {
         return this._soul;
     }
 
-    get memory(): MemoryStore | null {
-        return this._memory;
-    }
-
     get heartbeat(): HeartbeatConfig | null {
         return this._heartbeat;
     }
@@ -110,6 +102,29 @@ export class Ernesto {
         return this._systemPromptBuilder.build({
             skills: this.skillRegistry.getAll(),
             soul: this._soul ?? undefined,
+        });
+    }
+
+    /**
+     * Build a system prompt filtered to the skills visible in the given context.
+     */
+    buildFilteredSystemPrompt(ctx: ToolContext): string {
+        const skills = getVisibleSkills(ctx);
+        return this._systemPromptBuilder.build({
+            skills,
+            soul: ctx.soul ?? this._soul ?? undefined,
+        });
+    }
+
+    /**
+     * Build individual rendered sections filtered to visible skills.
+     * Used to snapshot the prompt composition at session creation time.
+     */
+    buildFilteredSystemPromptSections(ctx: ToolContext): RenderedPromptSection[] {
+        const skills = getVisibleSkills(ctx);
+        return this._systemPromptBuilder.buildSections({
+            skills,
+            soul: ctx.soul ?? this._soul ?? undefined,
         });
     }
 
@@ -131,7 +146,6 @@ export class Ernesto {
             skills: this.skillRegistry.toJSON(),
             toolCount: this.skillRegistry.getAllTools().length,
             soul: this._soul,
-            memory: this._memory !== null,
             heartbeat: this._heartbeat,
         };
     }
