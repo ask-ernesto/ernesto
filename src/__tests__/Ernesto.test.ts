@@ -35,22 +35,6 @@ describe('Ernesto', () => {
       expect(ernesto.soul).toBe(soul);
     });
 
-    it('stores and provides access to memory via getter', () => {
-      const memory = {
-        get: vi.fn(async () => null),
-        set: vi.fn(async () => {}),
-        search: vi.fn(async () => []),
-        delete: vi.fn(async () => {}),
-      };
-
-      const ernesto = new Ernesto({
-        memory,
-        typesense: mockTypesense,
-      });
-
-      expect(ernesto.memory).toBe(memory);
-    });
-
     it('stores and provides access to heartbeat via getter', () => {
       const heartbeat = {
         enabled: true,
@@ -123,6 +107,43 @@ describe('Ernesto', () => {
     });
   });
 
+  describe('buildFilteredSystemPrompt', () => {
+    it('uses ctx.soul when provided', () => {
+      const orgSoul = { name: 'OrgBot', persona: 'Org persona' };
+      const userSoul = { name: 'UserBot', persona: 'User persona' };
+      const ernesto = new Ernesto({
+        soul: orgSoul,
+        typesense: mockTypesense,
+      });
+
+      const ctx = {
+        soul: userSoul,
+        timestamp: Date.now(),
+        ernesto,
+      } as any;
+
+      const prompt = ernesto.buildFilteredSystemPrompt(ctx);
+      expect(prompt).toContain('User persona');
+      expect(prompt).not.toContain('Org persona');
+    });
+
+    it('falls back to org soul when ctx.soul is undefined', () => {
+      const orgSoul = { name: 'OrgBot', persona: 'Org persona' };
+      const ernesto = new Ernesto({
+        soul: orgSoul,
+        typesense: mockTypesense,
+      });
+
+      const ctx = {
+        timestamp: Date.now(),
+        ernesto,
+      } as any;
+
+      const prompt = ernesto.buildFilteredSystemPrompt(ctx);
+      expect(prompt).toContain('Org persona');
+    });
+  });
+
   describe('toJSON', () => {
     it('returns serializable ErnestoSnapshot with correct fields', () => {
       const tool = createTestTool({ name: 'test-tool' });
@@ -133,13 +154,6 @@ describe('Ernesto', () => {
         persona: 'A helpful test bot',
       };
 
-      const memory = {
-        get: vi.fn(async () => null),
-        set: vi.fn(async () => {}),
-        search: vi.fn(async () => []),
-        delete: vi.fn(async () => {}),
-      };
-
       const heartbeat = {
         enabled: true,
         every: '30m',
@@ -148,7 +162,6 @@ describe('Ernesto', () => {
       const ernesto = new Ernesto({
         skills: [skill],
         soul,
-        memory,
         heartbeat,
         typesense: mockTypesense,
       });
@@ -158,7 +171,6 @@ describe('Ernesto', () => {
       expect(snapshot).toHaveProperty('skills');
       expect(snapshot).toHaveProperty('toolCount');
       expect(snapshot).toHaveProperty('soul');
-      expect(snapshot).toHaveProperty('memory');
       expect(snapshot).toHaveProperty('heartbeat');
 
       expect(Array.isArray(snapshot.skills)).toBe(true);
@@ -167,7 +179,6 @@ describe('Ernesto', () => {
 
       expect(snapshot.toolCount).toBe(1);
       expect(snapshot.soul).toBe(soul);
-      expect(snapshot.memory).toBe(true);
       expect(snapshot.heartbeat).toBe(heartbeat);
     });
 
@@ -181,7 +192,6 @@ describe('Ernesto', () => {
       expect(snapshot.skills).toEqual([]);
       expect(snapshot.toolCount).toBe(0);
       expect(snapshot.soul).toBeNull();
-      expect(snapshot.memory).toBe(false);
       expect(snapshot.heartbeat).toBeNull();
     });
   });

@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import { z } from 'zod';
 import { SystemPromptBuilder, buildSkillCatalog, createDefaultPromptBuilder, PromptContext } from '../system-prompt';
 import { Soul } from '../soul';
 import { createTestSkill, createTestTool } from './helpers';
@@ -188,17 +189,56 @@ describe('buildSkillCatalog', () => {
     expect(catalog).toContain('## no-tools');
     expect(catalog).toContain('*Skill without tools*');
   });
+
+  it('should include param signatures when tools have inputSchema', () => {
+    const schema = z.object({
+      query: z.string().describe('Search query'),
+      limit: z.number().optional().describe('Max results'),
+    });
+    const tool = createTestTool({
+      name: 'search',
+      description: 'Search data',
+      inputSchema: schema,
+    });
+    const skill = createTestSkill({
+      name: 'test',
+      description: 'Test skill',
+      tools: [tool],
+    });
+
+    const catalog = buildSkillCatalog([skill]);
+
+    expect(catalog).toContain('- **test:search**: Search data (');
+    expect(catalog).toContain('query: string');
+    expect(catalog).toContain('limit: number');
+  });
+
+  it('should not include params when tool has no inputSchema', () => {
+    const tool = createTestTool({
+      name: 'simple',
+      description: 'Simple tool',
+    });
+    const skill = createTestSkill({
+      name: 'test',
+      description: 'Test skill',
+      tools: [tool],
+    });
+
+    const catalog = buildSkillCatalog([skill]);
+
+    expect(catalog).toContain('- **test:simple**: Simple tool');
+    expect(catalog).not.toContain('(');
+  });
 });
 
 describe('createDefaultPromptBuilder', () => {
-  it('should create builder with soul, skills, and memory sections', () => {
+  it('should create builder with soul and session-behavior sections (no skills)', () => {
     const builder = createDefaultPromptBuilder();
     const sections = builder.getSections();
 
     expect(sections).toEqual([
       { name: 'soul', priority: 10 },
-      { name: 'skills', priority: 30 },
-      { name: 'memory', priority: 40 },
+      { name: 'session-behavior', priority: 40 },
     ]);
   });
 
@@ -227,11 +267,13 @@ describe('createDefaultPromptBuilder', () => {
 
     const output = builder.build(context);
 
-    // With no soul and no skills, output should be empty or minimal
-    expect(output).not.toContain('# ');
+    // Soul section should not appear (no persona header)
+    expect(output).not.toContain('# OrgBot');
+    // But session behavior should still be present
+    expect(output).toContain('## Session Summary');
   });
 
-  it('should render skills section with skill catalog', () => {
+  it('should NOT include skills in default prompt (agent discovers via ask)', () => {
     const builder = createDefaultPromptBuilder();
     const skill = createTestSkill({
       name: 'test-skill',
@@ -244,25 +286,11 @@ describe('createDefaultPromptBuilder', () => {
 
     const output = builder.build(context);
 
-    expect(output).toContain('# Available Skills');
-    expect(output).toContain('## test-skill');
-    expect(output).toContain('- **test-skill:tool1**: Tool 1');
+    expect(output).not.toContain('# Available Skills');
+    expect(output).not.toContain('## test-skill');
   });
 
-  it('should render memory section when memoryContext is provided', () => {
-    const builder = createDefaultPromptBuilder();
-    const context: PromptContext = {
-      skills: [],
-      memoryContext: 'Previous conversation context...',
-    };
-
-    const output = builder.build(context);
-
-    expect(output).toContain('# Memory');
-    expect(output).toContain('Previous conversation context...');
-  });
-
-  it('should skip memory section when memoryContext is not provided', () => {
+  it('should include session behavior instructions', () => {
     const builder = createDefaultPromptBuilder();
     const context: PromptContext = {
       skills: [],
@@ -270,32 +298,26 @@ describe('createDefaultPromptBuilder', () => {
 
     const output = builder.build(context);
 
-    expect(output).not.toContain('# Memory');
+    expect(output).toContain('## Session Summary');
+    expect(output).toContain('## Session History');
+    expect(output).toContain('ask("topic")');
   });
 
-  it('should order sections by priority: soul, skills, memory', () => {
+  it('should order sections by priority: soul, session-behavior', () => {
     const builder = createDefaultPromptBuilder();
     const soul: Soul = {
       name: 'Test Assistant',
       persona: 'Help',
     };
-    const skill = createTestSkill({
-      name: 'test',
-      description: 'Test',
-      tools: [],
-    });
     const context: PromptContext = {
-      skills: [skill],
+      skills: [],
       soul,
-      memoryContext: 'Memory content',
     };
 
     const output = builder.build(context);
     const soulIndex = output.indexOf('Test Assistant');
-    const skillsIndex = output.indexOf('# Available Skills');
-    const memoryIndex = output.indexOf('# Memory');
+    const sessionIndex = output.indexOf('## Session Summary');
 
-    expect(soulIndex).toBeLessThan(skillsIndex);
-    expect(skillsIndex).toBeLessThan(memoryIndex);
+    expect(soulIndex).toBeLessThan(sessionIndex);
   });
 });
