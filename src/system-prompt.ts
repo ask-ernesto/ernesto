@@ -3,17 +3,21 @@
  *
  * Sections are assembled in priority order to form the final system prompt.
  *
- * Priority order:
+ * Default priority order:
  * 1. Soul (persona + tone)
  * 2. Org playbook (shared instructions)
- * 3. Skill catalog (auto-generated from registered skills)
- * 4. Memory context (recent memories)
- * 5. Tool instructions (how to use ask/run)
- * 6. Custom sections
+ * 3. Session behavior (summary writing + history search)
+ * 4. Tool instructions (how to use ask/run)
+ * 5. Custom sections
+ *
+ * NOTE: Skills are NOT included in the system prompt. The agent discovers
+ * tools at runtime via ask() — this avoids duplicating the catalog and
+ * wasting tokens on every turn.
  */
 
 import { Skill } from './skill';
 import { Soul, renderSoul } from './soul';
+import { formatZodSchemaForAgent } from './schema-formatter';
 
 /**
  * Context for building system prompts
@@ -23,19 +27,26 @@ export interface PromptContext {
     skills: Skill[];
     /** User's soul config */
     soul?: Soul;
-    /** Recent memory entries */
-    memoryContext?: string;
     /** Custom data for template interpolation */
     [key: string]: any;
 }
 
 /**
- * A named section of the system prompt
+ * A named section of the system prompt (internal — content may be a function)
  */
 interface PromptSection {
     name: string;
     content: string | ((ctx: PromptContext) => string);
     priority: number;
+}
+
+/**
+ * A rendered section of the system prompt (content already resolved to string)
+ */
+export interface RenderedPromptSection {
+    name: string;
+    priority: number;
+    content: string;
 }
 
 /**
@@ -88,6 +99,21 @@ export class SystemPromptBuilder {
             .sort((a, b) => a.priority - b.priority)
             .map((s) => ({ name: s.name, priority: s.priority }));
     }
+
+    /**
+     * Build and return individual rendered sections (for storage/dashboard).
+     * Each section's content is resolved against the given context.
+     */
+    buildSections(ctx: PromptContext): RenderedPromptSection[] {
+        return [...this.sections]
+            .sort((a, b) => a.priority - b.priority)
+            .map((s) => ({
+                name: s.name,
+                priority: s.priority,
+                content: (typeof s.content === 'function' ? s.content(ctx) : s.content).trim(),
+            }))
+            .filter((s) => s.content.length > 0);
+    }
 }
 
 /**
@@ -109,7 +135,8 @@ export function buildSkillCatalog(skills: Skill[]): string {
         if (skill.tools.length > 0) {
             parts.push('');
             for (const tool of skill.tools) {
-                parts.push(`- **${skill.name}:${tool.name}**: ${tool.description}`);
+                const params = tool.inputSchema ? formatZodSchemaForAgent(tool.inputSchema) : undefined;
+                parts.push(`- **${skill.name}:${tool.name}**: ${tool.description}${params ? ` (${params})` : ''}`);
             }
         }
 
@@ -131,16 +158,24 @@ export function createDefaultPromptBuilder(): SystemPromptBuilder {
         return renderSoul(ctx.soul);
     }, 10);
 
-    // Skill catalog (priority 30)
-    builder.addSection('skills', (ctx) => {
-        return buildSkillCatalog(ctx.skills);
-    }, 30);
+    // NOTE: Skills are NOT injected into the system prompt.
+    // The agent discovers tools via ask() at runtime — the skill catalog
+    // was removed to avoid duplicating what ask() already provides and
+    // wasting tokens on every turn.
 
-    // Memory context (priority 40)
-    builder.addSection('memory', (ctx) => {
-        if (!ctx.memoryContext) return '';
-        return `# Memory\n\n${ctx.memoryContext}`;
-    }, 40);
+    // Session behavior (priority 40)
+    builder.addSection('session-behavior', `## Session Summary
+
+Your structured output includes a \`summary\` field. Write a concise paragraph covering:
+- What was accomplished and key findings
+- Tools and data sources consulted
+- Outcome or recommendation
+
+Write "" for trivial interactions (greetings, simple lookups with no analysis).
+
+## Session History
+
+Past conversations are indexed and searchable. Use ask("topic") to find prior work, investigations, and decisions. Each session resource includes the original prompt, tools used with parameters, summary, and result. Follow-up conversations include the full parent chain for context.`, 40);
 
     return builder;
 }

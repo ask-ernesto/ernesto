@@ -7,6 +7,7 @@
 import { z } from 'zod';
 import { ToolContext } from '../skill';
 import { formatZodSchemaForAgent } from '../schema-formatter';
+import { getVisibleSkills } from '../skill-visibility';
 import { searchResources } from '../typesense/search';
 import debug from 'debug';
 
@@ -18,7 +19,14 @@ const inputSchema = z.object({
     perDomain: z.number().min(1).max(50).default(10).optional().describe('Maximum results per domain (default: 10)'),
 });
 
-export function createAskTool(context: ToolContext, description: string) {
+export interface AskToolOptions {
+    /** Domains to always include in results, even when filtering by a specific domain */
+    alwaysIncludeDomains?: string[];
+}
+
+export function createAskTool(context: ToolContext, description: string, options?: AskToolOptions) {
+    const alwaysIncludeDomains = options?.alwaysIncludeDomains ?? [];
+
     return {
         name: 'ask',
         description,
@@ -32,7 +40,7 @@ export function createAskTool(context: ToolContext, description: string) {
                 requestId: context.requestId,
             });
 
-            const result = await executeSearch(context, { query, domain, perDomain });
+            const result = await executeSearch(context, { query, domain, perDomain, alwaysIncludeDomains });
 
             log('ask complete', { query });
 
@@ -47,15 +55,24 @@ interface SearchParams {
     query: string;
     domain?: string;
     perDomain: number;
+    alwaysIncludeDomains?: string[];
 }
 
 async function executeSearch(ctx: ToolContext, params: SearchParams): Promise<string> {
-    const { query, domain, perDomain } = params;
+    const { query, domain, perDomain, alwaysIncludeDomains = [] } = params;
 
     const response: Record<string, any> = {};
 
-    const allSkills = ctx.ernesto.skillRegistry.getAll();
-    const skillsToSearch = domain ? allSkills.filter((s) => s.name === domain) : allSkills;
+    const allSkills = getVisibleSkills(ctx);
+
+    // When filtering by domain, also include always-included domains (e.g., sessions)
+    let skillsToSearch;
+    if (domain) {
+        const includeDomains = new Set([domain, ...alwaysIncludeDomains]);
+        skillsToSearch = allSkills.filter((s) => includeDomains.has(s.name));
+    } else {
+        skillsToSearch = allSkills;
+    }
 
     for (const skill of skillsToSearch) {
         const skillName = skill.name;
