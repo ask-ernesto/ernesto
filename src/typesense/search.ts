@@ -2,10 +2,10 @@
  * Typesense Resource Search
  *
  * Pure Typesense search functionality for resources.
- * Routes are NOT in Typesense - they live in RouteRegistry.
+ * Tools are NOT in Typesense - they live in SkillRegistry.
  */
 
-import { SearchSegment } from '../route';
+import { SearchSegment } from '../skill';
 import { searchMcpResources } from './client';
 import type { Ernesto } from '../Ernesto';
 import debug from 'debug';

@@ -6,17 +6,17 @@ import type { Ernesto } from '../Ernesto';
  * Build instruction context from Ernesto state
  */
 export async function buildInstructionContext(ernesto: Ernesto): Promise<InstructionContext> {
-    const domains = ernesto.domainRegistry.getAll().map((d) => d.name);
-    const routes = ernesto.routeRegistry.getAll();
+    const skills = ernesto.skillRegistry.getAll();
+    const toolCount = ernesto.skillRegistry.getAllTools().length;
 
     // Get resource count from Typesense
     const stats = await getMcpResourceStats(ernesto);
     const resourceCount = stats?.total || 0;
 
     return {
-        domainCount: domains.length,
-        routeCount: routes.length,
+        domainCount: skills.length,
+        routeCount: toolCount,
         resourceCount,
-        domains: domains.sort(),
+        domains: skills.map((s) => s.name).sort(),
     };
 }
