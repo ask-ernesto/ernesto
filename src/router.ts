@@ -220,7 +220,7 @@ export async function routeExecution(route: string, params: unknown, ctx: RouteC
         const startTime = Date.now();
 
         // Execute route
-        const { content, guidance } = await routeDef.execute(params, childCtx);
+        const { content, guidance, images } = await routeDef.execute(params, childCtx);
 
         const duration = Date.now() - startTime;
         log('Route executed', { route, duration });
@@ -238,6 +238,7 @@ export async function routeExecution(route: string, params: unknown, ctx: RouteC
         return {
             success: true,
             data: finalContent,
+            images,
         };
     } catch (error: any) {
         log('Unexpected error in route execution', { route, error });

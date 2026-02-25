@@ -5,7 +5,7 @@
  */
 
 import { z } from 'zod';
-import { RouteContext } from '../route';
+import { ImageBlock, RouteContext } from '../route';
 import { routeExecution } from '../router';
 import debug from 'debug';
 
@@ -39,7 +39,8 @@ export function createGetTool(context: RouteContext, description: string) {
                 requestId: context.requestId,
             });
 
-            // Execute all routes in parallel
+            // Execute all routes in parallel, collecting results and images separately
+            const images: ImageBlock[] = [];
             const results = await Promise.all(
                 routes.map(async ({ route, params = {} }) => {
                     try {
@@ -50,6 +51,10 @@ export function createGetTool(context: RouteContext, description: string) {
                                 route,
                                 error: result.error as any,
                             });
+                        }
+
+                        if (result.images) {
+                            images.push(...result.images);
                         }
 
                         return {
@@ -103,6 +108,11 @@ export function createGetTool(context: RouteContext, description: string) {
                             2,
                         ),
                     },
+                    ...images.map((img) => ({
+                        type: 'image' as const,
+                        data: img.data,
+                        mimeType: img.mimeType,
+                    })),
                 ],
             };
         },

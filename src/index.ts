@@ -23,6 +23,6 @@ export { DEFAULT_CACHE_TTL_MS } from './types';
 
 export type { ResourceNode, RawContent, ContentFormat, ContentSource, PipelineConfig, RawDocument } from './types';
 
-export type { Route, RouteContext, GuidedContent, RouteGuidance } from './route';
+export type { Route, RouteContext, GuidedContent, RouteGuidance, ImageBlock } from './route';
 
 export { LifecycleService } from './LifecycleService';

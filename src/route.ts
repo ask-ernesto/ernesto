@@ -96,11 +96,25 @@ export interface RouteGuidance {
 }
 
 /**
+ * An image content block to pass through to the MCP client.
+ * Use when a route returns visual content (e.g. screenshots).
+ */
+export interface ImageBlock {
+    type: 'image';
+    /** Base64-encoded image data */
+    data: string;
+    /** MIME type, e.g. 'image/png' */
+    mimeType: string;
+}
+
+/**
  * Route execution output - content with guidance
  */
 export interface GuidedContent {
     content: string;
     guidance: RouteGuidance[];
+    /** Optional image blocks passed through as MCP image content */
+    images?: ImageBlock[];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -163,6 +177,7 @@ export interface Route<TInput = unknown> {
 export interface RouteResult<T = unknown> {
     success: boolean;
     data?: T;
+    images?: ImageBlock[];
     error?: {
         code: string;
         message: string;
